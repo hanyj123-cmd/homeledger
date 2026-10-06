@@ -149,6 +149,60 @@ export function newItem(over) {
   return Object.assign({ name: '', name_raw: '', amountText: '', is_discount: false, tax_code: '', category_id: '', qty: null, unit_price: null }, over || {});
 }
 
+// ───────── 영어(한국어) 이중 표기 · 세금/팁 줄 바로잡기 ─────────
+
+const nameKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9가-힣]+/g, '');
+/** 항목 이름: 영어와 한국어를 함께 "English (한국어)" 한 칸으로. 한쪽만 있으면 그대로. */
+export function bilingualName(it) {
+  const en = String((it && it.name_en) || '').trim(), ko = String((it && it.name_ko) || '').trim(), nm = String((it && it.name) || '').trim();
+  if (en && ko) return nameKey(en) === nameKey(ko) ? en : en + ' (' + ko + ')';
+  return en || ko || nm;
+}
+const TAX_NAME_RE = /^\s*(?:hst|gst|pst|qst|vat|(?:sales\s+)?tax|세금|부가세|부가가치세)(?![a-z])(?![-\s]*(?:free|exempt|면세))/i;
+const TIP_NAME_RE = /^\s*(?:tip|gratuity|service\s+charge|팁|봉사료)(?![a-z])/i;
+export const isTaxName = (n) => TAX_NAME_RE.test(String(n || ''));
+export const isTipName = (n) => TIP_NAME_RE.test(String(n || ''));
+
+/** 항목 한 줄을 세금 또는 팁 칸으로 옮기기 (kind: 'tax' | 'tip'). 옮겼으면 true */
+export function moveItemTo(draft, idx, kind) {
+  const it = draft.items[idx];
+  if (!it || it.is_discount) return false;
+  const a = L.parseAmount(it.amountText);
+  if (!Number.isFinite(a) || a <= 0) return false;
+  const key = kind === 'tip' ? 'tipText' : 'taxText';
+  const dec = L.decimals(draft.currency || 'CAD');
+  const cur = String(draft[key]).trim() === '' ? 0 : L.parseAmount(draft[key]);
+  draft[key] = String(L.round((Number.isFinite(cur) ? cur : 0) + a, dec));
+  draft.items.splice(idx, 1);
+  return true;
+}
+/** 세금 ↔ 팁 서로 바꾸기 */
+export function swapTaxTip(draft) {
+  const t = draft.taxText;
+  draft.taxText = draft.tipText;
+  draft.tipText = t;
+}
+/** 총액에 맞춰 세금(또는 팁) 채우기. 영수증 소계가 있으면 그것을, 없으면 항목 합계를 기준으로 계산. { ok, value } | { error } */
+export function fillFromTotal(draft, taxCodes, which) {
+  const al = computeAllocation(draft, taxCodes);
+  if (!al.total) return { error: '영수증 총액을 먼저 입력하세요.' };
+  const sub = String(draft.subtotalText || '').trim() === '' ? NaN : L.parseAmount(draft.subtotalText);
+  const base = Number.isFinite(sub) && sub > 0 ? sub : al.subtotal;
+  const dec = al.dec;
+  if (which === 'tip') {
+    const tax = String(draft.taxText).trim() === '' ? al.taxApplied : L.parseAmount(draft.taxText);
+    const v = L.round(al.total - base - (Number.isFinite(tax) ? tax : 0), dec);
+    if (v < 0) return { error: '항목 + 세금이 이미 총액보다 큽니다.' };
+    draft.tipText = v ? String(v) : '';
+    return { ok: true, value: v };
+  }
+  const tip = al.tip;
+  const v = L.round(al.total - base - tip, dec);
+  if (v < 0) return { error: '항목 + 팁이 이미 총액보다 큽니다.' };
+  draft.taxText = v ? String(v) : '';
+  return { ok: true, value: v };
+}
+
 // ───────── 결제수단 추측 (영수증에 찍힌 카드 뒷4자리 · 카드 종류 → 내 계좌) ─────────
 
 /** 계좌의 "뒷 4자리" 칸 → 4자리 목록. "1234, 5678" · "····1234" 처럼 쓸 수 있고, 카드번호 전체를 넣어도 마지막 4자리만 남깁니다 */
@@ -216,15 +270,28 @@ export function draftFromParsed(parsed, img, meta, ctx) {
   const ruleCat = rule && ctx.accMap.get(String(rule.account_id)) && ctx.accMap.get(String(rule.account_id)).type === 'EXPENSE' ? String(rule.account_id) : '';
   const dec = L.decimals(ccy);
   const payGuess = ctx.accounts ? guessPayAccount(parsed, ctx.accounts) : null;
-  const items = (parsed.items || []).map((it) => newItem({
-    name: it.name, name_raw: it.name_raw || '', amountText: String(L.round(it.amount, dec)), is_discount: !!it.is_discount,
+  // 세금·팁이 "항목"으로 읽혔으면 세금·팁 칸으로 옮깁니다 (항목에 그대로 두면 카테고리가 엉뚱하게 붙고 합계가 두 번 더해져요)
+  let movedTax = 0, movedTip = 0, movedAny = false;
+  const rawItems = (parsed.items || []).filter((it) => {
+    if (it.is_discount) return true;
+    if (isTaxName(it.name)) { movedTax += Number(it.amount) || 0; movedAny = true; return false; }
+    if (isTipName(it.name)) { movedTip += Number(it.amount) || 0; movedAny = true; return false; }
+    return true;
+  });
+  const items = rawItems.map((it) => newItem({
+    name: bilingualName(it), name_raw: it.name_raw || '', amountText: String(L.round(it.amount, dec)), is_discount: !!it.is_discount,
     tax_code: ccy === 'CAD' ? (it.tax_code || '') : '', category_id: it.category_id || ruleCat || '', qty: it.qty, unit_price: it.unit_price
   }));
+  const taxVal = parsed.tax_total === null || parsed.tax_total === undefined ? (movedTax > 0 ? movedTax : null) : parsed.tax_total;
+  const tipVal = parsed.tip ? parsed.tip : (movedTip > 0 ? movedTip : 0);
+  const moveWarn = movedAny ? ['Tax / tip lines that were read as items were moved to the Tax and Tip boxes (품목으로 읽힌 세금·팁 줄을 세금·팁 칸으로 옮겼어요).'] : [];
   return {
     merchant: parsed.merchant || '', date: parsed.date || L.todayStr(), currency: ccy,
-    totalText: parsed.total ? String(L.round(parsed.total, dec)) : '', taxText: parsed.tax_total === null || parsed.tax_total === undefined ? '' : String(L.round(parsed.tax_total, dec)),
-    tipText: parsed.tip ? String(L.round(parsed.tip, dec)) : '', tipCategory: '', cadText: '', rateText: '',
-    fromId: (payGuess && payGuess.id) || ctx.fromId || '', owner: ctx.owner || 'Joint', items, warnings: parsed.warnings || [], notes: parsed.notes || '',
+    totalText: parsed.total ? String(L.round(parsed.total, dec)) : '', taxText: taxVal === null ? '' : String(L.round(taxVal, dec)),
+    tipText: tipVal ? String(L.round(tipVal, dec)) : '', tipCategory: '', cadText: '', rateText: '',
+    subtotalText: parsed.subtotal ? String(L.round(parsed.subtotal, dec)) : '',
+    ai: { tax: taxVal === null ? '' : String(L.round(taxVal, dec)), tip: tipVal ? String(L.round(tipVal, dec)) : '', subtotal: parsed.subtotal ? String(L.round(parsed.subtotal, dec)) : '', total: parsed.total ? String(L.round(parsed.total, dec)) : '' },
+    fromId: (payGuess && payGuess.id) || ctx.fromId || '', owner: ctx.owner || 'Joint', items, warnings: moveWarn.concat(parsed.warnings || []), notes: parsed.notes || '',
     pay: /^\d{4}$/.test(String(parsed.card_last4 || '')) || parsed.card_brand || parsed.payment_method
       ? { last4: /^\d{4}$/.test(String(parsed.card_last4 || '')) ? String(parsed.card_last4) : '', brand: parsed.card_brand || '', method: parsed.payment_method || '', how: payGuess ? payGuess.how : '', guessId: payGuess ? payGuess.id : '', ambiguous: !!(payGuess && payGuess.ambiguous) } : null,
     thumb: (img && img.thumb) || '', meta: meta || null, existing: null

@@ -146,7 +146,7 @@ export function isReceiptTxn(state, txnId) {
 }
 
 function openReview(api, draft, close, show, shell) {
-  const { h, fmt } = api;
+  const { h, fmt, toast } = api;
   const data = api.state.data, d = api.state.d;
   const editing = !!draft._existing;
   let saving = false;
@@ -187,6 +187,10 @@ function openReview(api, draft, close, show, shell) {
         h('div', { class: 'rc-line strong' }, h('span', null, 'Computed (계산 합계)'), h('span', null, fmt(al.computedTotal, ccy))),
         h('div', { class: 'rc-line strong' }, h('span', null, 'Receipt total (영수증 총액)'), h('span', null, al.total ? fmt(al.total, ccy) : '—'))
       ];
+      const rs = String(draft.subtotalText || '').trim() === '' ? NaN : L.parseAmount(draft.subtotalText);
+      if (Number.isFinite(rs) && rs > 0 && Math.abs(rs - al.subtotal) >= 0.005) {
+        parts.splice(1, 0, h('div', { class: 'rc-line warn', id: 'rc-subdiff' }, h('span', null, 'Receipt subtotal (영수증 소계)'), h('span', null, fmt(rs, ccy) + ' · differs by ' + fmt(Math.abs(rs - al.subtotal), ccy) + ' (차이)')));
+      }
       sumEl.replaceChildren(...parts.filter(Boolean));
       if (al.total && Math.abs(al.diff) >= 0.005) {
         sumEl.append(h('div', { class: 'err', id: 'rc-diff', role: 'alert' }, 'Off by ' + fmt(Math.abs(al.diff), ccy) + (al.diff > 0 ? ' (items too low · 항목이 모자람)' : ' (items too high · 항목이 많음)')),
@@ -210,7 +214,12 @@ function openReview(api, draft, close, show, shell) {
           ccy === 'CAD' ? h('select', { class: 'rc-tax', 'aria-label': 'Tax (세금)', onchange: (e) => { it.tax_code = e.target.value; upd(); } }, taxOptions(it.tax_code)) : null),
         h('label', { class: 'check rc-disc' },
           h('input', { type: 'checkbox', checked: it.is_discount, onchange: (e) => { it.is_discount = e.target.checked; draw(); } }),
-          h('span', null, 'Discount / coupon — subtract (할인 · 쿠폰: 금액 차감)')));
+          h('span', null, 'Discount / coupon — subtract (할인 · 쿠폰: 금액 차감)')),
+        // 세금·팁이 항목으로 잘못 읽혔을 때: 이 줄을 세금/팁 칸으로 옮기기
+        it.is_discount ? null : h('div', { class: 'rc-move' },
+          h('span', { class: 'rc-move-lbl' }, 'This line is actually (이 줄은 사실):'),
+          h('button', { type: 'button', class: 'btn secondary sm rc-to-tax', onclick: () => { if (R.moveItemTo(draft, idx, 'tax')) draw(); else toast('Enter an amount first (금액을 먼저 입력하세요)'); } }, 'Tax (세금)'),
+          h('button', { type: 'button', class: 'btn secondary sm rc-to-tip', onclick: () => { if (R.moveItemTo(draft, idx, 'tip')) draw(); else toast('Enter an amount first (금액을 먼저 입력하세요)'); } }, 'Tip (팁)')));
     };
 
     const rows = [];
@@ -280,10 +289,25 @@ function openReview(api, draft, close, show, shell) {
     } }, '+ Add item (항목 추가)'));
 
     rows.push(h('h2', { class: 'sect' }, 'Totals (합계)'));
+    rows.push(h('p', { class: 'hint rc-tt-hint' }, 'Check what the AI read for tax and tip — you can fix any of these (AI가 읽은 세금·팁을 확인하세요. 틀리면 직접 고칠 수 있어요).'));
+    const aiHint = (key, cur) => {
+      const v = draft.ai && draft.ai[key];
+      if (v === undefined || v === null || String(v) === String(cur).trim()) return null;
+      return h('button', { type: 'button', class: 'rc-reset', 'data-reset': key, onclick: () => { draft[key + 'Text'] = String(v); draw(); } }, 'AI read (AI가 읽은 값): ' + (v === '' ? '—' : v) + ' · reset (되돌리기)');
+    };
+    rows.push(field('Subtotal on receipt (영수증 소계) — for checking (확인용)', h('input', { type: 'text', id: 'rc-subtotal', inputmode: 'decimal', value: draft.subtotalText || '', placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.subtotalText = e.target.value; updateSum(); } }), aiHint('subtotal', draft.subtotalText || '')));
     rows.push(h('div', { class: 'two rc-two' },
-      field('Tax on receipt (영수증 세금)', h('input', { type: 'text', id: 'rc-tax', inputmode: 'decimal', value: draft.taxText, placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.taxText = e.target.value; updateSum(); } })),
-      field('Tip (팁)', h('input', { type: 'text', id: 'rc-tip', inputmode: 'decimal', value: draft.tipText, placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.tipText = e.target.value; updateSum(); } }))));
-    rows.push(field('Receipt total (영수증 총액)', h('input', { type: 'text', id: 'rc-total', inputmode: 'decimal', value: draft.totalText, placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.totalText = e.target.value; updateSum(); } })));
+      field('Tax on receipt (영수증 세금)', h('input', { type: 'text', id: 'rc-tax', inputmode: 'decimal', value: draft.taxText, placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.taxText = e.target.value; updateSum(); } }), aiHint('tax', draft.taxText)),
+      field('Tip (팁)', h('input', { type: 'text', id: 'rc-tip', inputmode: 'decimal', value: draft.tipText, placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.tipText = e.target.value; updateSum(); } }), aiHint('tip', draft.tipText))));
+    rows.push(h('div', { class: 'rc-tt-btns' },
+      h('button', { type: 'button', class: 'btn secondary sm', id: 'rc-swap', onclick: () => { R.swapTaxTip(draft); draw(); } }, 'Swap tax ↔ tip (세금 ↔ 팁 바꾸기)'),
+      h('button', { type: 'button', class: 'btn secondary sm', id: 'rc-fill-tax', onclick: () => { const r = R.fillFromTotal(draft, taxCodes, 'tax'); if (r.error) toast(r.error); else draw(); } }, 'Tax = total − items − tip (총액에 맞춰 세금 채우기)'),
+      h('button', { type: 'button', class: 'btn secondary sm', id: 'rc-fill-tip', onclick: () => { const r = R.fillFromTotal(draft, taxCodes, 'tip'); if (r.error) toast(r.error); else draw(); } }, 'Tip = total − items − tax (총액에 맞춰 팁 채우기)')));
+    if (String(draft.tipText).trim() !== '' && L.num(draft.tipText) > 0) {
+      rows.push(field('Tip category (팁 카테고리)', h('select', { id: 'rc-tipcat', onchange: (e) => { draft.tipCategory = e.target.value; } },
+        [h('option', { value: '' }, 'Same as the biggest item (가장 큰 항목과 같게)')].concat(catOptions(draft.tipCategory).slice(1)))));
+    }
+    rows.push(field('Receipt total (영수증 총액)', h('input', { type: 'text', id: 'rc-total', inputmode: 'decimal', value: draft.totalText, placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.totalText = e.target.value; updateSum(); } }), aiHint('total', draft.totalText)));
     if (ccy !== 'CAD') {
       rows.push(h('div', { class: 'two rc-two' },
         field('CAD charged (CAD 청구액)', h('input', { type: 'text', id: 'rc-cad', inputmode: 'decimal', value: draft.cadText, autocomplete: 'off', oninput: (e) => { draft.cadText = e.target.value; } })),

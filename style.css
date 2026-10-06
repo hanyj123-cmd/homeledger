@@ -2312,3 +2312,30 @@ input[type="date"]::-webkit-date-and-time-value { text-align: left; min-height: 
 .pay-chk { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; font-size: 0.95em; }
 .pay-chk input { width: 22px; height: 22px; flex: none; accent-color: var(--green); }
 .pay-checks { display: flex; flex-wrap: wrap; gap: 0 22px; }
+
+/* v0.19 — 폰에서 재무(자산·카드/대출) 카드는 한 줄에 하나씩, 미지급 월 선택이 칸 밖으로 안 나가게 */
+.bsgrid.two { grid-template-columns: minmax(0, 1fr); }
+html[data-layout="desktop"] .bsgrid.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.bscard-h { gap: 4px 12px; flex-wrap: wrap; }
+.bscard-h h3 { min-width: 0; }
+.bsrow { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.bsrow .t { overflow-wrap: anywhere; }
+@media (max-width: 420px) { .bsrow .c { min-width: 0; } }
+input[type="month"] { display: block; -webkit-appearance: none; appearance: none; min-width: 0; max-width: 100%; box-sizing: border-box; }
+input[type="month"]::-webkit-date-and-time-value { text-align: left; min-height: 1.3em; }
+.wl-two > *, .wl-two .field { min-width: 0; }
+.wl input[type="month"] { width: 100%; inline-size: 100%; }
+
+/* v0.19 — 영수증: 세금/팁 바로잡기 */
+.rc-move { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 6px; }
+.rc-move-lbl { font-size: 0.85em; color: var(--muted); flex: 1 1 100%; }
+.rc-move .btn { min-height: 44px; }
+.rc-tt-hint { margin: 2px 0 8px; }
+.rc-tt-btns { display: grid; gap: 8px; margin: 6px 0 10px; }
+.rc-tt-btns .btn { min-height: 44px; text-align: left; white-space: normal; height: auto; line-height: 1.3; padding-top: 8px; padding-bottom: 8px; }
+.rc-reset { display: block; margin-top: 4px; min-height: 44px; padding: 6px 4px; background: none; border: 0; color: var(--green-ink); text-align: left; font: inherit; font-size: 0.85em; text-decoration: underline; cursor: pointer; overflow-wrap: anywhere; }
+.rc-line.warn { color: var(--out); font-weight: 600; }
+@media (max-width: 640px) {
+  .rc-item-top { grid-template-columns: minmax(0, 1fr) 44px; }
+  .rc-item-top .rc-name { grid-column: 1 / -1; }
+}
