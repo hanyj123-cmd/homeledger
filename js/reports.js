@@ -1,4 +1,5 @@
 // 손익(Income Statement)과 재무상태(Balance Sheet). 계산(순수 로직) + 화면.
+import { openPrintReport } from './printreport.js';
 import * as L from './ledger.js';
 import * as B from './budget.js';
 
@@ -32,7 +33,9 @@ export function incomeStatementOver(items, accMap, months) {
     if (review) reviewCount++;
   });
   const lineOf = (id, amount) => { const a = accMap.get(String(id)); return { id: String(id), name: a.name, name_ko: a.name_ko || '', amount: L.round(amount, 2), sort: L.num(a.sort_order), group: a.report_group || '' }; };
-  const incomeLines = Array.from(inc, ([id, v]) => lineOf(id, v)).filter((l) => l.amount !== 0).sort((a, b) => b.amount - a.amount);
+  // 줄 순서: 카테고리의 sort_order (보고서의 "순서 바꾸기"로 정함) → 같으면 금액 큰 순
+  const bySort = (a, b) => (a.sort - b.sort) || (b.amount - a.amount);
+  const incomeLines = Array.from(inc, ([id, v]) => lineOf(id, v)).filter((l) => l.amount !== 0).sort(bySort);
   const groups = new Map();
   Array.from(exp, ([id, v]) => lineOf(id, v)).filter((l) => l.amount !== 0).forEach((l) => {
     const key = l.group || '확인 필요';
@@ -41,7 +44,7 @@ export function incomeStatementOver(items, accMap, months) {
   });
   const order = L.GROUP_ORDER.filter((g) => groups.has(g)).concat(Array.from(groups.keys()).filter((g) => L.GROUP_ORDER.indexOf(g) < 0));
   const expenseGroups = order.map((key) => {
-    const lines = groups.get(key).sort((a, b) => b.amount - a.amount);
+    const lines = groups.get(key).sort(bySort);
     return { key, label: L.GROUP_LABELS[key] || key, total: L.round(lines.reduce((s, l) => s + l.amount, 0), 2), lines };
   });
   const income = L.round(incomeLines.reduce((s, l) => s + l.amount, 0), 2);
@@ -105,6 +108,7 @@ export function priorMonths(ym, scope) {
   return scopeMonths(ym, 'Y').map((m) => (Number(m.slice(0, 4)) - 1) + m.slice(4));
 }
 
+const sortOf = (accMap, id) => { const a = accMap.get(String(id)); return a ? L.num(a.sort_order) : 1e9; };
 const sumBudget = (budgets, months, id) => L.round(months.reduce((s, m) => s + (B.budgetMap(budgets, m).get(String(id)) || 0), 0), 2);
 
 const pctChange = (cur, prev) => (Math.abs(prev) > 0.004 ? L.round((cur - prev) / Math.abs(prev) * 100, 1) : null);
@@ -124,7 +128,7 @@ export function compareIS(items, accMap, budgets, months, prevMonths) {
     return Array.from(map.values()).map((e) => {
       const budget = withBudget ? sumBudget(budgets, months, e.id) : 0;
       return Object.assign(e, { delta: L.round(e.cur - e.prev, 2), pct: pctChange(e.cur, e.prev), budget, used: budget > 0 ? Math.round(e.cur / budget * 100) : null });
-    }).sort((a, b) => (b.cur - a.cur) || (b.prev - a.prev));
+    }).sort((a, b) => (sortOf(accMap, a.id) - sortOf(accMap, b.id)) || (b.cur - a.cur) || (b.prev - a.prev));
   };
   const total = (lines, key) => L.round(lines.reduce((s, l) => s + l[key], 0), 2);
   const incLines = merge(cur.incomeLines, prev.incomeLines, false);
@@ -151,9 +155,31 @@ export function compareIS(items, accMap, budgets, months, prevMonths) {
 // insights.js 도 reports.js 를 불러오는 순환 import 이지만, 두 파일 모두 "함수 선언"만 쓰고 불러오는 즉시 서로를 호출하지 않으므로 안전합니다.
 
 /** 소유자별 수입·지출·순수입 (months 기간) + 비교 기간(prevMonths) 지출 증감 + 지출 비중. 지출 많은 순. */
+/**
+ * 소유자별 수입·지출. 나눈 거래(split)는 줄마다 owner 가 있을 수 있으므로 p.owner || txn.owner || 'Joint' 로 나눕니다.
+ * 반환: [{owner, income, expense, net}] 지출 많은 순 (insights.ownerTable 과 같은 모양)
+ */
+export function ownerTotals(items, accMap, ms) {
+  const set = new Set(ms);
+  const by = new Map();
+  items.forEach((it) => {
+    if (!set.has(L.monthOf(it.txn.date))) return;
+    it.ps.forEach((p) => {
+      const a = accMap.get(String(p.account_id));
+      if (!a || (a.type !== 'INCOME' && a.type !== 'EXPENSE')) return;
+      const o = String(p.owner || it.txn.owner || 'Joint').trim() || 'Joint';
+      const e = by.get(o) || { owner: o, income: 0, expense: 0 };
+      if (a.type === 'INCOME') e.income -= L.num(p.amount_cad); else e.expense += L.num(p.amount_cad);
+      by.set(o, e);
+    });
+  });
+  return Array.from(by.values()).map((e) => ({ owner: e.owner, income: L.round(e.income, 2), expense: L.round(e.expense, 2), net: L.round(e.income - e.expense, 2) }))
+    .filter((e) => e.income || e.expense).sort((a, b) => b.expense - a.expense);
+}
+
 export function peopleReport(items, accMap, months, prevMonths) {
-  const cur = I.ownerTable(items, accMap, months);
-  const prev = new Map(I.ownerTable(items, accMap, prevMonths || []).map((e) => [e.owner, e]));
+  const cur = ownerTotals(items, accMap, months);
+  const prev = new Map(ownerTotals(items, accMap, prevMonths || []).map((e) => [e.owner, e]));
   const income = L.round(cur.reduce((s, e) => s + e.income, 0), 2);
   const expense = L.round(cur.reduce((s, e) => s + e.expense, 0), 2);
   const rows = cur.map((e) => {
@@ -177,10 +203,14 @@ import { icon } from './icons.js';
 import { layoutOf } from './layout.js';
 import * as drill from './drill.js';
 import * as I from './insights.js';
+import * as P from './prefs.js';
+import { makeSortable } from './reorder.js';
 
 let mode = 'IS';
 let scope = 'M';
-export function setMode(m) { mode = m; }
+let reo = null;   // 손익 "순서 바꾸기" 중일 때: { lists: Map(그룹 → [account_id…]) } (저장 전까지는 화면에만)
+export function setMode(m) { mode = m; reo = null; }
+export function isReordering() { return !!reo; }
 export function setScope(s) { scope = s === 'Y' ? 'Y' : 'M'; }
 
 const fmtDate = (s) => { const d = new Date(String(s).slice(0, 10) + 'T12:00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
@@ -188,7 +218,14 @@ const rangeLabel = (ms) => (ms.length === 1 ? L.monthLabel(ms[0]) : L.monthLabel
 
 // api = { h, fmt, state, items, accounts, accMap, data, toast, saveBudgets, rerender, goSearch, openForm, drillApi }
 export function render(api) {
-  const { h, fmt, state } = api;
+  const { h, state } = api;
+  // "달러 단위" 켜짐 → 표시만 반올림 (계산은 그대로 센트 단위)
+  const whole = P.rounded();
+  const fmt = (n, ccy) => {
+    if (!whole) return api.fmt(n, ccy);
+    const r = Math.round(Number(n) || 0);
+    return api.fmt(r === 0 ? 0 : r, ccy).replace(/\.0+$/, '');
+  };
   const lay = layoutOf();
   const frag = document.createDocumentFragment();
   const D = () => (api.drillApi ? api.drillApi() : api);
@@ -257,14 +294,14 @@ export function render(api) {
   frag.append(h('div', { class: 'pills' },
     h('button', { type: 'button', class: 'pillbtn', id: 'rep-new', onclick: () => api.openForm(null, {}) }, icon('plus', 24), 'New ', h('span', { class: 'ko' }, '거래 추가')),
     h('button', { type: 'button', class: 'pillbtn', id: 'rep-csv', onclick: exportCsv }, icon('download', 24), 'Export ', h('span', { class: 'ko' }, '내려받기')),
-    h('button', { type: 'button', class: 'pillbtn', id: 'rep-print', onclick: () => window.print && window.print() }, icon('print', 24), 'Print ', h('span', { class: 'ko' }, '인쇄')),
+    h('button', { type: 'button', class: 'pillbtn', id: 'rep-print', onclick: () => { try { openPrintReport(api.pageApi ? api.pageApi() : api, { tab: 'reports' }); } catch (e) { api.toast('Could not open print (인쇄 창을 열지 못했어요)'); } } }, icon('print', 24), 'Print ', h('span', { class: 'ko' }, '인쇄')),
     h('button', { type: 'button', class: 'pillbtn', id: 'rep-ledger', onclick: () => api.goSearch('') }, icon('ledger', 24), 'Ledger ', h('span', { class: 'ko' }, '거래 탭'))));
 
   // ── 페이지
   const seg = h('div', { class: 'segtd five', role: 'tablist' },
     [['IS', 'Income', '손익'], ['BS', 'Balance', '재무'], ['BG', 'Budget', '예산'], ['WHO', 'People', '사람별'], ['VENDOR', 'Vendors', '업체별']].map((m) => h('button', {
       type: 'button', id: 'rep-' + m[0], role: 'tab', class: mode === m[0] ? 'on' : '', 'aria-selected': String(mode === m[0]),
-      onclick: () => { mode = m[0]; if (m[0] === 'WHO' || m[0] === 'VENDOR') drill.close(); api.rerender(); }
+      onclick: () => { if (mode !== m[0]) reo = null; mode = m[0]; if (m[0] === 'WHO' || m[0] === 'VENDOR') drill.close(); api.rerender(); }
     }, m[1], h('span', { class: 'ko' }, m[2]))));
   const stepBtn = (dir, lab) => h('button', { type: 'button', class: 'stepbtn', 'aria-label': lab, onclick: () => { state.month = L.shiftMonth(state.month, dir); api.rerender(); } }, icon(dir < 0 ? 'left' : 'right', 20));
   const months = Array.from(new Set(api.items.map((it) => L.monthOf(it.txn.date)).concat([L.monthOf(today), month]))).sort().reverse();
@@ -272,17 +309,21 @@ export function render(api) {
     h('select', { id: 'rep-month', 'aria-label': 'Month (월)', onchange: (e) => { state.month = e.target.value; api.rerender(); } }, months.map((m) => h('option', { value: m, selected: m === month }, L.monthLabel(m)))));
   const scopeSeg = ranged ? h('div', { class: 'segtd sm', role: 'tablist' },
     [['M', 'Month', '월'], ['Y', 'Year to date', '올해 누계']].map((s) => h('button', { type: 'button', id: 'rep-scope-' + s[0], class: scope === s[0] ? 'on' : '', onclick: () => { scope = s[0]; api.rerender(); } }, s[1], h('span', { class: 'ko' }, s[2])))) : null;
-  const toolbar = h('div', { class: 'toolbar' }, h('div', { class: 'l' }, stepBtn(-1, 'Previous month (이전 달)'), monthSel, stepBtn(1, 'Next month (다음 달)')), h('div', { class: 'r' }, scopeSeg));
+  const roundBtn = h('button', { type: 'button', class: 'rep-round' + (whole ? ' on' : ''), id: 'rep-round', role: 'switch', 'aria-checked': String(whole), title: 'Show amounts without cents (센트 없이 보기)',
+    onclick: () => { P.setRounded(!whole); api.rerender(); } }, h('span', { class: 'sw', 'aria-hidden': 'true' }, h('i')), h('span', { class: 'lab' }, 'Whole dollars (달러 단위)'));
+  const toolbar = h('div', { class: 'toolbar rep-toolbar' }, h('div', { class: 'l' }, stepBtn(-1, 'Previous month (이전 달)'), monthSel, stepBtn(1, 'Next month (다음 달)')), h('div', { class: 'r' }, scopeSeg, roundBtn,
+    mode === 'IS' && !reo ? h('button', { type: 'button', class: 'btn secondary is-reorder', id: 'rep-reorder', onclick: () => startReorder() }, h('span', { class: 'grip', 'aria-hidden': 'true' }), 'Reorder (순서 바꾸기)') : null));
   const page = h('div', { class: 'page' }, seg, toolbar);
   frag.append(page);
 
   const selbar = h('div', { class: 'selbar', id: 'rep-selbar', hidden: true });
   const body = h('div', { id: mode === 'IS' ? 'rep-is' : mode === 'BS' ? 'rep-bs' : mode === 'BG' ? 'rep-bg' : mode === 'WHO' ? 'rep-who' : 'rep-vendor' });
-  const useDock = lay === 'tablet' && mode !== 'WHO' && mode !== 'VENDOR';   // 사람별·업체별은 줄을 누르면 거래 탭으로 가므로 오른쪽 칸이 필요 없음
-  const grid = h('div', { class: 'rep-grid' + (useDock ? ' docked' : '') }, body);
+  const reordering = mode === 'IS' && !!reo;
+  const useDock = lay === 'tablet' && mode !== 'WHO' && mode !== 'VENDOR' && !reordering;   // 사람별·업체별은 줄을 누르면 거래 탭으로 가므로 오른쪽 칸이 필요 없음
+  const grid = h('div', { class: 'rep-grid' + (useDock ? ' docked' : '') + (reordering ? ' reordering' : '') }, body);
   if (useDock) {
     const dock = h('div', { class: 'dock', id: 'dock' });
-    const fill = (el) => el.replaceChildren(h('div', { class: 'dock-empty' }, icon('list', 34), h('div', null, 'Tap a line to see its transactions here. (줄을 누르면 거래가 여기에 나옵니다.)')));
+    const fill = (el) => el.replaceChildren(h('div', { class: 'dock-empty' }, icon('list', 34), h('div', null, mode === 'IS' ? 'Tap an amount to see its transactions here. (금액을 누르면 거래가 여기에 나옵니다.)' : 'Tap a line to see its transactions here. (줄을 누르면 거래가 여기에 나옵니다.)')));
     fill(dock);
     drill.setDock(dock, fill);
     grid.append(dock);
@@ -347,9 +388,15 @@ export function render(api) {
   }
 
   // ───── 손익 ─────
+  // 카테고리 이름(줄)을 누르면 선택 → 위 초록 막대에 합계. 금액을 누르면 그 줄의 거래가 열림.
   function drawIS() {
+    if (reo) { drawReorder(); return; }
     const lab = scope === 'Y' ? ['Year to date', '올해 누계'] : ['This month', '이번 달'];
     const plab = scope === 'Y' ? ['Same period last year', '작년 같은 기간'] : ['Last month', '지난달'];
+    body.append(h('div', { class: 'is-hint', id: 'rep-is-hint' }, icon('info', 18),
+      h('span', null, lay === 'phone'
+        ? 'Tap a name to add it to a total · tap an amount to see transactions. (이름을 누르면 합계에 더하고, 금액을 누르면 거래가 열립니다.)'
+        : 'Tap a name to add it to a running total; tap an amount to see its transactions (the prior amount opens that period). (이름을 누르면 합계에 더하고, 금액을 누르면 거래가 열립니다. 이전 금액을 누르면 그 기간 거래가 열립니다.)')));
     if (cmp.review) {
       body.append(h('button', { type: 'button', class: 'card warn-card', id: 'rep-review', onclick: () => api.goSearch('Uncategorized') },
         cmp.review + ' transaction(s) need a category (카테고리 확인이 필요한 거래 ' + cmp.review + '건) — tap to review (눌러서 확인)'));
@@ -364,35 +411,42 @@ export function render(api) {
     const lineIndex = new Map();
     sections.forEach((s) => s.lines.forEach((l) => lineIndex.set(l.id, { l, s })));
 
-    const pickBtn = (id) => h('button', { type: 'button', class: 'pickc', 'aria-label': 'Select line (줄 선택)', 'data-pick': id, onclick: (e) => { e.stopPropagation(); togglePick(id); } }, icon('check', 15));
     const markRows = () => {
-      body.querySelectorAll('[data-line]').forEach((el) => el.classList.toggle('on', state.repSel.has(el.getAttribute('data-line'))));
+      body.querySelectorAll('[data-line]').forEach((el) => {
+        const on = state.repSel.has(el.getAttribute('data-line'));
+        el.classList.toggle('on', on);
+        el.setAttribute('aria-pressed', String(on));
+      });
       const ids = Array.from(state.repSel).filter((id) => lineIndex.has(id));
       selbar.hidden = !ids.length;
       if (!ids.length) { selbar.replaceChildren(); return; }
       let c = 0, p = 0; const names = [];
-      ids.forEach((id) => { const e = lineIndex.get(id); const sg = e.s.kind === 'inc' ? 1 : 1; c += e.l.cur * sg; p += e.l.prev * sg; names.push(e.l.name); });
-      selbar.replaceChildren(h('b', null, ids.length + ' lines (줄)'), h('b', { id: 'rep-sel-sum' }, fmt(L.round(c, 2))),
+      ids.forEach((id) => { const e = lineIndex.get(id); c += e.l.cur; p += e.l.prev; names.push(e.l.name); });
+      selbar.replaceChildren(h('b', null, ids.length + ' selected (선택)'), h('b', { id: 'rep-sel-sum' }, fmt(L.round(c, 2))),
         h('span', { class: 'nms' }, names.join(', ')),
-        h('span', null, plab[0] + ' ' + fmt(L.round(p, 2))),
+        h('span', { class: 'prv' }, plab[0] + ' ' + fmt(L.round(p, 2))),
         h('button', { type: 'button', class: 'btn', id: 'rep-sel-view', onclick: () => D() && drill.show(D(), { key: 'multi:' + ids.join(',') + curMs.join(','), title: ids.length + ' lines (줄)', sub: rangeLabel(curMs), months: curMs, ids, mode: 'exp', totalLabel: 'Selected total (선택 합계)', addDefaults: {} }) }, 'View (거래 보기)'),
         h('button', { type: 'button', class: 'btn ghost', id: 'rep-sel-clear', onclick: () => { state.repSel.clear(); markRows(); } }, 'Clear (해제)'));
     };
     const togglePick = (id) => { if (state.repSel.has(id)) state.repSel.delete(id); else state.repSel.add(id); markRows(); };
+    const rowKeys = (id) => (e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePick(id); } };
+    // 금액 버튼: 누르면 거래 상세 (줄 선택은 하지 않음)
+    const amtBtn = (l, s, which, kids, extraCls) => h('button', {
+      type: 'button', class: 'amt' + (extraCls ? ' ' + extraCls : '') + ((which === 'prev' ? l.prev : l.cur) ? '' : ' zero'), 'data-amt': which,
+      'aria-label': (which === 'prev' ? plab[0] : lab[0]) + ' · ' + l.name + ' — transactions (거래 보기)',
+      onclick: (e) => { e.stopPropagation(); openLine(l, s.kind, which === 'prev' ? prvMs : curMs); }
+    }, kids);
 
     if (lay === 'phone') {
       sections.forEach((s) => {
         body.append(h('div', { class: 'rl-sec ' + s.cls }, h('h3', null, s.label), h('b', null, fmt(s.cur))));
-        const box = h('div', { class: 'ledger ' + s.cls });
+        const box = h('div', { class: 'ledger is-list ' + s.cls });
         const isExp = s.kind === 'exp';
         s.lines.forEach((l) => {
-          const goodUp = !isExp;
-          box.append(h('div', { class: 'rl-row ' + s.cls, role: 'button', tabindex: '0', 'data-line': l.id, 'data-acct': l.id, onclick: () => openLine(l, s.kind, curMs), onkeydown: (e) => { if (e.key === 'Enter') openLine(l, s.kind, curMs); } },
-            pickBtn(l.id),
+          box.append(h('div', { class: 'rl-row pick ' + s.cls, role: 'button', tabindex: '0', 'aria-pressed': 'false', 'data-line': l.id, 'data-acct': l.id, onclick: () => togglePick(l.id), onkeydown: rowKeys(l.id) },
             h('div', { class: 't' }, l.name),
-            h('div', { class: 'v' }, fmt(l.cur)),
             h('div', { class: 's' }, plab[0] + ' ' + fmt(l.prev) + (l.budget ? ' · budget (예산) ' + fmt(l.budget) : '')),
-            h('div', { class: 'c' }, pctEl(l.cur, l.prev, goodUp)),
+            amtBtn(l, s, 'cur', [h('span', { class: 'v' }, fmt(l.cur)), h('span', { class: 'c' }, pctEl(l.cur, l.prev, !isExp))], 'rl-amt'),
             s.cur ? h('div', { class: 'share-bar' }, h('i', { style: 'width:' + Math.max(l.cur > 0 ? 3 : 0, Math.round(Math.abs(l.cur) / Math.max(Math.abs(s.cur), 1) * 100)) + '%' })) : null));
         });
         body.append(box);
@@ -403,7 +457,7 @@ export function render(api) {
     } else {
       const wide = lay === 'desktop';
       const slim = lay === 'tablet';   // 아이패드: 오른쪽 칸이 있으므로 열을 줄입니다
-      const th = (en, ko, r) => h('th', null, en, h('span', { class: 'ko' }, ko));
+      const th = (en, ko) => h('th', null, en, h('span', { class: 'ko' }, ko));
       const tr = h('tr', null, th('Account', '계정'), th(lab[0], lab[1]), slim ? null : th(plab[0], plab[1]), slim ? null : th('Change', '증감'), th('Change %', '증감률'), wide ? th('Budget', '예산') : null, wide ? th('Used', '사용률') : null);
       const tb = h('tbody');
       sections.forEach((s) => {
@@ -411,10 +465,10 @@ export function render(api) {
         tb.append(h('tr', { class: 'sec ' + s.cls }, h('td', { colspan: wide ? 7 : slim ? 3 : 5 }, s.label)));
         s.lines.forEach((l) => {
           const goodUp = !isExp;
-          tb.append(h('tr', { class: 'line ' + s.cls, 'data-line': l.id, 'data-acct': l.id, onclick: (e) => openLine(l, s.kind, e.target.closest('td[data-prior]') ? prvMs : curMs) },
-            h('td', { class: 'nm' }, h('div', { class: 'nmcell' }, pickBtn(l.id), h('div', { class: 't' }, l.name, l.name_ko && l.name_ko !== l.name ? h('div', { class: 's' }, l.name_ko) : null))),
-            h('td', null, fmt(l.cur)),
-            slim ? null : h('td', { 'data-prior': '1' }, fmt(l.prev)),
+          tb.append(h('tr', { class: 'line pick ' + s.cls, tabindex: '0', 'aria-pressed': 'false', 'data-line': l.id, 'data-acct': l.id, onclick: (e) => { if (!e.target.closest('[data-amt]')) togglePick(l.id); }, onkeydown: rowKeys(l.id) },
+            h('td', { class: 'nm' }, h('div', { class: 'nmcell' }, h('div', { class: 't' }, l.name, l.name_ko && l.name_ko !== l.name ? h('div', { class: 's' }, l.name_ko) : null))),
+            h('td', { class: 'amtcell' }, amtBtn(l, s, 'cur', fmt(l.cur))),
+            slim ? null : h('td', { class: 'amtcell', 'data-prior': '1' }, amtBtn(l, s, 'prev', fmt(l.prev), 'prior')),
             slim ? null : h('td', null, chg(l.delta, goodUp)),
             h('td', null, pctEl(l.cur, l.prev, goodUp)),
             wide ? h('td', null, l.budget ? fmt(l.budget) : '') : null,
@@ -425,10 +479,166 @@ export function render(api) {
           wide ? h('td', null, s.budget ? fmt(s.budget) : '') : null, wide ? h('td', null, s.budget ? Math.round(s.cur / s.budget * 100) + '%' : '') : null));
       });
       tb.append(h('tr', { class: 'net', id: 'rep-net' }, h('td', { class: 'nm' }, 'Net income (순수입)'), h('td', null, (cmp.net.cur < 0 ? '−' : '') + fmt(Math.abs(cmp.net.cur))), slim ? null : h('td', null, (cmp.net.prev < 0 ? '−' : '') + fmt(Math.abs(cmp.net.prev))), slim ? null : h('td', null, chg(L.round(cmp.net.cur - cmp.net.prev, 2), true)), h('td', null, pctEl(cmp.net.cur, cmp.net.prev, true)), wide ? h('td') : null, wide ? h('td') : null));
-      body.append(h('div', { class: 'tbl' }, h('div', { class: 'tbl-scroll' }, h('table', { class: 'rpt', id: 'rpt-is' }, h('thead', null, tr), tb))));
-      body.append(h('div', { class: 'note' }, 'Tap a line to see its transactions; tap the circle to add lines into a running total. Tap the prior amount to see that period. (줄을 누르면 거래가 열리고, 동그라미를 누르면 여러 줄의 합계를 볼 수 있습니다. 이전 금액을 누르면 그 기간 거래가 열립니다.)'));
+      body.append(h('div', { class: 'tbl' }, h('div', { class: 'tbl-scroll' }, h('table', { class: 'rpt pickable', id: 'rpt-is' }, h('thead', null, tr), tb))));
     }
     markRows();
+  }
+
+  // ───── 손익: 카테고리 순서 바꾸기 ─────
+  // 수입 / 고정비 / semi-고정비 / 유흥비 / 금융비 / 확인 필요 그룹 안에서 순서를 바꾸고, 같은 종류(지출끼리)면 다른 그룹으로도 옮길 수 있습니다.
+  // 저장하면 Accounts 시트의 sort_order (그룹을 옮겼으면 report_group 도) 를 바꿉니다.
+  function catAccounts() {
+    return api.accounts.filter((a) => (a.type === 'INCOME' || a.type === 'EXPENSE') && L.isActive(a));
+  }
+  function groupKeyOf(a) {
+    if (a.type === 'INCOME') return '수입';
+    const g = a.report_group || '확인 필요';
+    return g === '수입' ? '확인 필요' : g;
+  }
+  function typeOfGroup(key) { return key === '수입' ? 'INCOME' : 'EXPENSE'; }
+  function reoKeys() {
+    const extra = Array.from(reo.lists.keys()).filter((k) => k !== '수입' && L.GROUP_ORDER.indexOf(k) < 0);
+    return ['수입'].concat(L.GROUP_ORDER, extra);
+  }
+  // 지금 계정 목록과 맞춥니다 (새로 추가된 카테고리는 그 그룹 끝에, 없어진 것은 뺌)
+  function syncReo() {
+    const accs = catAccounts().slice().sort((a, b) => L.num(a.sort_order) - L.num(b.sort_order));
+    const have = new Set(accs.map((a) => String(a.account_id)));
+    if (!reo.lists) reo.lists = new Map();
+    reo.lists.forEach((ids, k) => reo.lists.set(k, ids.filter((id) => have.has(id))));
+    const placed = new Set(); reo.lists.forEach((ids) => ids.forEach((id) => placed.add(id)));
+    ['수입'].concat(L.GROUP_ORDER).forEach((k) => { if (!reo.lists.has(k)) reo.lists.set(k, []); });
+    accs.forEach((a) => {
+      const id = String(a.account_id);
+      if (placed.has(id)) return;
+      const k = groupKeyOf(a);
+      if (!reo.lists.has(k)) reo.lists.set(k, []);
+      reo.lists.get(k).push(id);
+    });
+  }
+  function startReorder() {
+    reo = { lists: null };
+    syncReo();
+    drill.close();
+    api.rerender();
+  }
+  function cancelReorder() { reo = null; api.rerender(); }
+  function changedRows() {
+    const seq = [];
+    reoKeys().forEach((k) => (reo.lists.get(k) || []).forEach((id) => seq.push({ id, key: k })));
+    const accOf = (id) => L.rawAccount(api.accMap.get(String(id)));
+    let vals = seq.map((e) => L.num(accOf(e.id).sort_order)).sort((a, b) => a - b);
+    if (vals.some((v, i) => i > 0 && v <= vals[i - 1])) {   // 같은 번호가 있으면 새로 매김
+      const base = vals.length ? Math.max(0, vals[0]) : 0;
+      vals = seq.map((e, i) => base + i);
+    }
+    const now = L.nowIso();
+    const rows = [];
+    seq.forEach((e, i) => {
+      const a = accOf(e.id);
+      const moved = groupKeyOf(a) !== e.key;
+      const group = moved ? e.key : (a.report_group || '');
+      if (L.num(a.sort_order) !== vals[i] || moved) rows.push(Object.assign({}, a, { sort_order: vals[i], report_group: group, updated_at: now }));
+    });
+    return rows;
+  }
+  async function saveReorder(btn) {
+    const rows = changedRows();
+    if (!rows.length) { reo = null; api.toast('No changes (바뀐 것이 없습니다)'); api.rerender(); return; }
+    const saveBatch = api.saveBatch || (api.pageApi && api.pageApi().saveBatch);
+    if (!saveBatch) { api.toast('Cannot save here (여기서는 저장할 수 없습니다)'); return; }
+    const keep = reo;
+    if (btn) btn.disabled = true;
+    try {
+      reo = null;
+      await saveBatch({ Accounts: rows }, ['Accounts']);
+      api.toast('Order saved (순서 저장됨)');
+    } catch (e) {
+      reo = keep; if (btn) btn.disabled = false;
+      api.toast('Save failed (저장 실패): ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  function drawReorder() {
+    syncReo();
+    const openCat = api.openCategoryForm || (api.pageApi && api.pageApi().openCategoryForm);
+    const keys = reoKeys();
+    const posOf = (id) => { for (const k of keys) { const i = (reo.lists.get(k) || []).indexOf(id); if (i >= 0) return { k, i }; } return null; };
+    const sameTypeKeys = (k) => keys.filter((x) => typeOfGroup(x) === typeOfGroup(k));
+    const wrap = h('div', { class: 'ro-wrap', id: 'ro-wrap' });
+    const status = h('span', { class: 'ro-count', id: 'ro-count', 'aria-live': 'polite' });
+    const saveBtn = h('button', { type: 'button', class: 'btn', id: 'ro-save', onclick: (e) => saveReorder(e.currentTarget) }, icon('check', 18), 'Save (저장)');
+    body.append(h('div', { class: 'ro-intro', id: 'ro-head' },
+      h('div', { class: 'ro-title' }, h('span', { class: 'grip big', 'aria-hidden': 'true' }), h('div', null,
+        h('b', null, 'Reorder categories (카테고리 순서 바꾸기)'),
+        h('div', { class: 'ro-help' }, 'Drag the handle, or use ▲ ▼. Spending categories can move to another group. (손잡이를 끌거나 ▲ ▼ 를 누르세요. 지출 카테고리는 다른 그룹으로도 옮길 수 있습니다.)')))));
+    body.append(h('div', { class: 'ro-bar', id: 'ro-bar' }, status, h('div', { class: 'ro-actions' }, h('button', { type: 'button', class: 'btn secondary', id: 'ro-cancel', onclick: cancelReorder }, 'Cancel (취소)'), saveBtn)));
+    body.append(wrap);
+
+    const move = (id, dir) => {
+      const p = posOf(id); if (!p) return;
+      const list = reo.lists.get(p.k);
+      const j = p.i + dir;
+      if (j >= 0 && j < list.length) { list.splice(p.i, 1); list.splice(j, 0, id); }
+      else {
+        // 그룹 끝에서 더 가면 옆 그룹(같은 종류)으로
+        const tk = sameTypeKeys(p.k); const gi = tk.indexOf(p.k) + dir;
+        if (id === UNCATEGORIZED_ID || gi < 0 || gi >= tk.length) return;
+        list.splice(p.i, 1);
+        const to = reo.lists.get(tk[gi]);
+        if (dir < 0) to.push(id); else to.unshift(id);
+      }
+      paint(id, dir < 0 ? 'up' : 'down');
+    };
+
+    function paint(focusId, focusDir) {
+      const rows = changedRows();
+      status.textContent = rows.length ? rows.length + ' changed (바뀜)' : 'No changes yet (아직 그대로)';
+      saveBtn.classList.toggle('pulse', rows.length > 0);
+      status.classList.toggle('has', rows.length > 0);
+      wrap.replaceChildren();
+      keys.forEach((k) => {
+        const ids = reo.lists.get(k) || [];
+        const extraGroup = k !== '수입' && L.GROUP_ORDER.indexOf(k) < 0;
+        if (extraGroup && !ids.length) return;
+        const cls = L.GROUP_CLASS[k] || '';
+        const tk = sameTypeKeys(k); const gi = tk.indexOf(k);
+        const list = h('div', { class: 'ro-list ' + cls, 'data-group': k, 'data-type': typeOfGroup(k) });
+        ids.forEach((id, i) => {
+          const a = api.accMap.get(id);
+          const firstAll = i === 0 && (gi === 0 || id === UNCATEGORIZED_ID);
+          const lastAll = i === ids.length - 1 && (gi === tk.length - 1 || id === UNCATEGORIZED_ID);
+          list.append(h('div', { class: 'ro-item ' + cls, 'data-id': id, 'data-type': a.type },
+            h('span', { class: 'ro-grip', role: 'img', 'aria-label': 'Drag to reorder (끌어서 순서 바꾸기)', title: 'Drag to reorder (끌어서 순서 바꾸기)' }, h('span', { class: 'grip' })),
+            h('div', { class: 'ro-name' }, h('b', null, a.name), a.name_ko && a.name_ko !== a.name ? h('span', { class: 's' }, a.name_ko) : null),
+            h('button', { type: 'button', class: 'ro-mv', 'data-up': id, disabled: firstAll, 'aria-label': 'Move up (위로)', onclick: () => move(id, -1) }, '▲'),
+            h('button', { type: 'button', class: 'ro-mv', 'data-down': id, disabled: lastAll, 'aria-label': 'Move down (아래로)', onclick: () => move(id, 1) }, '▼')));
+        });
+        if (!ids.length) list.append(h('div', { class: 'ro-empty', 'data-ro-tail': '1' }, 'Drop here (여기에 놓기)'));
+        if (openCat) list.append(h('button', { type: 'button', class: 'ro-add', 'data-ro-tail': '1', 'data-add': k, onclick: () => openCat({ type: typeOfGroup(k), report_group: k }) }, icon('plus', 18), 'Add category (카테고리 추가)'));
+        wrap.append(h('section', { class: 'ro-sec ' + cls, 'data-group': k },
+          h('h3', { class: 'ro-sec-h' }, h('span', null, L.GROUP_LABELS[k] || k), h('span', { class: 'ro-n' }, String(ids.length))), list));
+      });
+      if (focusId) {
+        const el = wrap.querySelector('.ro-item[data-id="' + focusId + '"]');
+        if (el) {
+          el.classList.add('dropped'); setTimeout(() => el.classList.remove('dropped'), 400);
+          if (focusDir === 'none') return;
+          const b = el.querySelector(focusDir === 'up' ? '[data-up]' : '[data-down]');
+          const target = b && !b.disabled ? b : el.querySelector('.ro-mv:not([disabled])');
+          if (target && target.focus) target.focus({ preventScroll: false });
+        }
+      }
+    }
+    paint();
+    makeSortable(wrap, {
+      list: '.ro-list', item: '.ro-item', handle: '.ro-grip',
+      canDrop: (el, list) => el.getAttribute('data-type') === list.getAttribute('data-type') && (el.getAttribute('data-id') !== UNCATEGORIZED_ID || list.getAttribute('data-group') === '확인 필요'),
+      onDrop: (el) => {
+        wrap.querySelectorAll('.ro-list').forEach((l) => reo.lists.set(l.getAttribute('data-group'), Array.from(l.querySelectorAll('.ro-item')).map((x) => x.getAttribute('data-id'))));
+        paint(el.getAttribute('data-id'), 'none');
+      }
+    });
   }
 
   // ───── 재무상태 ─────
@@ -565,7 +775,7 @@ export function render(api) {
       const gc = L.GROUP_CLASS[g.key] || '';
       const sec = h('div', null, h('h2', { class: 'sect grp ' + gc }, g.label + ' · ' + fmt(g.actual) + ' / ' + fmt(g.budget)));
       const led = h('div', { class: 'bg-list' });
-      g.lines.forEach((l) => led.append(h('div', { class: 'bg-item' },
+      g.lines.slice().sort((a, b) => sortOf(api.accMap, a.id) - sortOf(api.accMap, b.id)).forEach((l) => led.append(h('div', { class: 'bg-item' },
         h('button', { type: 'button', class: 'row bg-row ' + gc, 'data-acct': l.id, onclick: () => openEditor(l) },
           h('div', { class: 'row-main' },
             h('div', { class: 'row-title' }, l.name),

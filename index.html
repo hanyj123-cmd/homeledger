@@ -12,7 +12,7 @@
   <link rel="apple-touch-icon" href="icon-180.png">
   <link rel="icon" href="icon-192.png">
   <title>Home Ledger</title>
-  <script>(function(){try{var t=localStorage.getItem("hl_theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);var z=parseFloat(localStorage.getItem("hl_scale"));if(z>0.7&&z<1.8)document.documentElement.style.setProperty("--ui-scale",String(z));}catch(e){}})();</script>
+  <script>(function(){try{var t=localStorage.getItem("hl_theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);var z=parseFloat(localStorage.getItem("hl_scale"));if(z>0.7&&z<1.8)document.documentElement.style.setProperty("--ui-scale",String(z));var l=localStorage.getItem("hl_lang");if(l==="ko"||l==="en"){document.documentElement.setAttribute("data-lang",l);document.documentElement.setAttribute("lang",l);}}catch(e){}})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap">
@@ -29,6 +29,8 @@
       <span class="brand-text"><b>Home Ledger</b><i>우리집 장부</i></span>
     </div>
     <div class="top-actions">
+      <button id="print-btn" class="iconbtn" type="button" aria-label="Print report (보고서 인쇄)" title="Print report (보고서 인쇄)"></button>
+      <button id="lang-btn" class="iconbtn langbtn" type="button" aria-label="Language (언어)" title="Language (언어)">한/A</button>
       <button id="theme-btn" class="iconbtn" type="button" aria-label="Theme (화면 모드)" title="Theme (화면 모드)"></button>
       <button id="chip" class="chip warn" type="button">● Sign in (로그인 필요)</button>
     </div>

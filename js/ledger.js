@@ -1,5 +1,6 @@
 // 장부 핵심 로직 (화면·네트워크와 무관한 순수 함수)
 // 분개 규칙: 차변(+) / 대변(−) 부호 금액, 한 거래의 합계는 항상 0.
+import { lang } from './prefs.js';
 import { CONFIG } from './config.js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -151,20 +152,37 @@ export function accLabel(a) {
 export const isMoneyAccount = (a) => !!a && (a.type === 'ASSET' || a.type === 'LIABILITY') && a.subtype !== 'CLEARING';
 
 export function makeAccMap(accounts) {
-  return new Map(accounts.map((a) => [String(a.account_id), a]));
+  // 한/영 설정에 맞춰 화면에 보일 이름만 바꾼 복사본을 씁니다. 원래 행은 __row 로 (저장할 때는 반드시 원래 행을 쓰세요)
+  const m = lang();
+  return new Map(accounts.map((a) => {
+    if (m === 'both') return [String(a.account_id), a];
+    const c = Object.assign({}, a, m === 'ko' ? { name: a.name_ko || a.name, name_ko: '', name_en: a.name } : { name_ko: '', name_en: a.name });
+    Object.defineProperty(c, '__row', { value: a, enumerable: false });
+    return [String(a.account_id), c];
+  }));
 }
+/** accMap 에서 꺼낸 계정의 원래 시트 행 */
+export const rawAccount = (a) => (a && a.__row) || a;
 
 // ───────── 분개 설명 ─────────
+
+export const SPLIT_LABEL = (n) => 'Split · ' + n + ' (나눔 ' + n + ')';
 
 export function describeTxn(txn, postings, accMap) {
   const get = (id) => accMap.get(String(id));
   const nameOf = (id) => { const a = get(id); return a ? a.name : String(id); };
   const out = { kind: 'TRANSFER', flow: 'move', categoryId: '', categoryName: '', accountId: '', accountName: '', fromName: '', toName: '' };
   const isId = (p, id) => String(p.account_id) === String(id);
+  const typeOf = (p) => { const a = get(p.account_id); return a ? a.type : ''; };
   const opening = postings.find((p) => isId(p, CONFIG.OPENING_ID));
   const clearing = postings.find((p) => isId(p, CONFIG.CLEARING_ID));
-  const exp = postings.find((p) => { const a = get(p.account_id); return a && a.type === 'EXPENSE'; });
-  const inc = postings.find((p) => { const a = get(p.account_id); return a && a.type === 'INCOME'; });
+  const exps = postings.filter((p) => typeOf(p) === 'EXPENSE');
+  const incs = postings.filter((p) => typeOf(p) === 'INCOME');
+  const exp = exps[0];
+  const inc = incs[0];
+  // 돈이 오간 계좌(자산·부채) — 나눈 거래(분개 여러 줄)에서도 카테고리 줄이 아닌 쪽을 고릅니다
+  const moneyOf = (cats) => postings.find((p) => cats.indexOf(p) < 0 && (typeOf(p) === 'ASSET' || typeOf(p) === 'LIABILITY'))
+    || postings.find((p) => cats.indexOf(p) < 0);
 
   if (opening) {
     const other = postings.find((p) => !isId(p, CONFIG.OPENING_ID));
@@ -181,20 +199,28 @@ export function describeTxn(txn, postings, accMap) {
       out.accountName = nameOf(other.account_id);
       out.flow = num(other.amount_cad) < 0 ? 'out' : 'in';
     }
-  } else if (exp) {
-    const other = postings.find((p) => p !== exp);
-    out.kind = 'EXPENSE';
-    out.flow = num(exp.amount_cad) >= 0 ? 'out' : 'in';
-    out.categoryId = String(exp.account_id);
-    out.categoryName = nameOf(exp.account_id);
+  } else if (exp || inc) {
+    const cats = exp ? exps : incs;
+    const other = moneyOf(cats);
+    out.kind = exp ? 'EXPENSE' : 'INCOME';
+    if (exp) out.flow = other ? (num(other.amount_cad) <= 0 ? 'out' : 'in') : (num(exp.amount_cad) >= 0 ? 'out' : 'in');
+    else out.flow = 'in';
+    out.categoryId = String(cats[0].account_id);
+    out.categoryName = nameOf(cats[0].account_id);
     if (other) { out.accountId = String(other.account_id); out.accountName = nameOf(other.account_id); }
-  } else if (inc) {
-    const other = postings.find((p) => p !== inc);
-    out.kind = 'INCOME';
-    out.flow = 'in';
-    out.categoryId = String(inc.account_id);
-    out.categoryName = nameOf(inc.account_id);
-    if (other) { out.accountId = String(other.account_id); out.accountName = nameOf(other.account_id); }
+    if (cats.length > 1) {
+      // 거래 나누기: 카테고리 줄이 여러 개 (금액은 지출/수입 방향 기준 +)
+      const dir = exp ? (out.flow === 'in' ? -1 : 1) : -1;
+      out.split = cats.length;
+      out.lines = cats.map((p) => ({
+        postingId: String(p.posting_id || ''), accountId: String(p.account_id), name: nameOf(p.account_id),
+        cad: round(dir * num(p.amount_cad), 2), orig: round(dir * num(p.amount_orig === '' || p.amount_orig === undefined ? p.amount_cad : p.amount_orig), 6),
+        owner: String(p.owner || ''), memo: String(p.memo || '')
+      }));
+      const big = out.lines.reduce((b, l) => (Math.abs(l.cad) > Math.abs(b.cad) ? l : b), out.lines[0]);
+      out.categoryId = out.lines.some((l) => l.accountId === '9999') ? '9999' : big.accountId;
+      out.categoryName = SPLIT_LABEL(cats.length);
+    }
   } else {
     const to = postings.find((p) => num(p.amount_cad) > 0);
     const from = postings.find((p) => num(p.amount_cad) < 0);
@@ -213,7 +239,8 @@ export function newForm(defaults) {
   return Object.assign({
     kind: 'EXPENSE', date: todayStr(), amountText: '', currency: 'CAD', cadText: '', rateText: '',
     fromId: '', toId: '', categoryId: '', accountId: '', merchant: '', memo: '', owner: 'Joint',
-    tripTag: '', passthrough: false, refund: false, categoryTouched: false, ownerTouched: false
+    tripTag: '', passthrough: false, refund: false, categoryTouched: false, ownerTouched: false,
+    split: false, lines: []
   }, defaults || {});
 }
 
@@ -241,6 +268,16 @@ export function formFromTxn(txn, postings, accMap) {
     f.kind = 'OPENING'; f.accountId = d.accountId;
   } else {
     f.kind = 'TRANSFER'; f.fromId = d.fromId || ''; f.toId = d.toId || '';
+  }
+  if (d.split && (f.kind === 'EXPENSE' || f.kind === 'INCOME')) {
+    // 나눈 거래: 줄마다 카테고리·금액(원래 통화)·소유자·메모
+    const dec = decimals(ccy);
+    f.split = true;
+    f.categoryId = d.lines[0].accountId;
+    f.lines = d.lines.map((l) => ({
+      postingId: l.postingId, categoryId: l.accountId, amountText: String(round(l.orig, dec)),
+      owner: l.owner || f.owner || 'Joint', memo: l.memo
+    }));
   }
   return f;
 }
@@ -294,6 +331,48 @@ export function latestRate(fxRates, ccy) {
   return best ? num(best.rate) : 0;
 }
 
+// ───────── 거래 나누기 (split) ─────────
+
+const toMinor = (n, dec) => Math.round(round(n, dec) * Math.pow(10, dec));
+
+/** 나눈 줄의 합계 확인 (센트 단위). { ok, total, sum, remaining, dec, amounts:[원래 통화 금액|NaN] } */
+export function splitBalance(form) {
+  const ccy = form.currency || 'CAD';
+  const dec = decimals(ccy);
+  const total = round(parseAmount(form.amountText), dec);
+  const amounts = (form.lines || []).map((l) => { const n = parseAmount(l.amountText); return Number.isFinite(n) ? round(n, dec) : NaN; });
+  const sumMinor = amounts.reduce((s, a) => s + (Number.isFinite(a) ? toMinor(a, dec) : 0), 0);
+  const totMinor = Number.isFinite(total) ? toMinor(total, dec) : NaN;
+  const f = Math.pow(10, dec);
+  const remaining = Number.isFinite(totMinor) ? (totMinor - sumMinor) / f : NaN;
+  const blank = amounts.findIndex((a) => !Number.isFinite(a) || a === 0);
+  return { ok: Number.isFinite(totMinor) && totMinor > 0 && remaining === 0 && blank < 0, total, sum: sumMinor / f, remaining, dec, amounts, blank };
+}
+
+/** 총액을 n 줄로 똑같이 나누기 (남는 센트는 앞 줄부터 1씩) */
+export function splitEvenly(total, n, dec) {
+  if (!(n > 0)) return [];
+  const t = toMinor(total, dec);
+  const base = Math.trunc(t / n);
+  let rest = t - base * n;
+  const f = Math.pow(10, dec);
+  return Array.from({ length: n }, () => { let v = base; if (rest > 0) { v++; rest--; } else if (rest < 0) { v--; rest++; } return v / f; });
+}
+
+/** 원래 통화 줄 금액 → CAD 금액. 합계가 정확히 totalCad 가 되도록 반올림 차이는 가장 큰 줄에 붙입니다. */
+export function allocateCad(origAmounts, totalOrig, totalCad) {
+  if (!origAmounts.length) return [];
+  const cents = origAmounts.map((a) => Math.round(round(totalOrig ? a * totalCad / totalOrig : 0, 2) * 100));
+  const want = Math.round(totalCad * 100);
+  const diff = want - cents.reduce((s, c) => s + c, 0);
+  if (diff) {
+    let big = 0;
+    origAmounts.forEach((a, i) => { if (Math.abs(a) > Math.abs(origAmounts[big])) big = i; });
+    cents[big] += diff;
+  }
+  return cents.map((c) => c / 100);
+}
+
 // 폼 입력 → 거래 1건 + 분개들. 실패하면 { error }.
 export function makeRecords(form, ctx) {
   const accMap = ctx.accMap;
@@ -321,10 +400,36 @@ export function makeRecords(form, ctx) {
 
   const A = (id) => accMap.get(String(id));
   const passthrough = !!form.passthrough && (kind === 'EXPENSE' || kind === 'INCOME');
-  const categoryId = passthrough ? CONFIG.CLEARING_ID : form.categoryId;
+  const split = !!form.split && !passthrough && (kind === 'EXPENSE' || kind === 'INCOME') && (form.lines || []).length > 0;
+  let categoryId = passthrough ? CONFIG.CLEARING_ID : form.categoryId;
   let lines;
+  let splitLines = null; // [{ categoryId, orig, cad, owner, memo, postingId }]
 
-  if (kind === 'EXPENSE') {
+  if (split) {
+    const catType = kind === 'EXPENSE' ? 'EXPENSE' : 'INCOME';
+    const moneyId = kind === 'EXPENSE' ? form.fromId : form.toId;
+    if (!isMoneyAccount(A(moneyId))) return { error: kind === 'EXPENSE' ? '결제 계좌를 선택하세요.' : '입금 계좌를 선택하세요.' };
+    const bal = splitBalance(form);
+    for (let i = 0; i < form.lines.length; i++) {
+      const c = A(form.lines[i].categoryId);
+      if (!c || c.type !== catType) return { error: (i + 1) + '번째 줄의 ' + (kind === 'EXPENSE' ? '카테고리' : '수입 항목') + '를 선택하세요.' };
+      if (!Number.isFinite(bal.amounts[i]) || bal.amounts[i] === 0) return { error: (i + 1) + '번째 줄의 금액을 입력하세요.' };
+    }
+    if (bal.remaining !== 0) {
+      return { error: '나눈 금액의 합계가 총액과 다릅니다 (' + (bal.remaining > 0 ? '남은 금액 ' : '초과 ') + fmtMoney(Math.abs(bal.remaining), ccy) + ').' };
+    }
+    const cads = allocateCad(bal.amounts, amount, cad);
+    splitLines = form.lines.map((l, i) => ({
+      categoryId: String(l.categoryId), orig: bal.amounts[i], cad: cads[i],
+      owner: l.owner || form.owner || 'Joint', memo: (l.memo || '').trim(), postingId: l.postingId || ''
+    }));
+    categoryId = splitLines[0].categoryId;
+    // 지출: 카테고리 + / 계좌 −  (환불은 반대) · 수입: 계좌 + / 수입 항목 −
+    const catSign = kind === 'EXPENSE' ? (form.refund ? -1 : 1) : -1;
+    lines = [[moneyId, -catSign, cad, amount, '', '', '']]
+      .concat(splitLines.map((l) => [l.categoryId, catSign, l.cad, l.orig, l.owner, l.memo, l.postingId]));
+    if (kind === 'EXPENSE' && !form.refund) lines = lines.slice(1).concat(lines.slice(0, 1));
+  } else if (kind === 'EXPENSE') {
     if (!isMoneyAccount(A(form.fromId))) return { error: '결제 계좌를 선택하세요.' };
     const c = A(categoryId);
     if (!c || !(c.type === 'EXPENSE' || String(c.account_id) === CONFIG.CLEARING_ID)) return { error: '카테고리를 선택하세요.' };
@@ -349,10 +454,16 @@ export function makeRecords(form, ctx) {
 
   const txnId = existing ? existing.txn.txn_id : newId('t');
   const oldPostings = existing ? existing.ps.filter((p) => !truthy(p.deleted)) : [];
-  // 수정 시 기존 분개 행을 최대한 재사용: 같은 계정끼리 먼저 짝지은 뒤, 남은 것을 순서대로 채움
+  // 수정 시 기존 분개 행을 최대한 재사용: 나눈 줄은 원래 분개 id 로, 그다음 같은 계정끼리, 남은 것을 순서대로 채움
   const used = new Set();
   const assigned = lines.map(() => null);
   lines.forEach((ln, i) => {
+    if (!ln[6]) return;
+    const k = oldPostings.findIndex((p, j) => !used.has(j) && String(p.posting_id) === String(ln[6]));
+    if (k >= 0) { used.add(k); assigned[i] = oldPostings[k]; }
+  });
+  lines.forEach((ln, i) => {
+    if (assigned[i]) return;
     const k = oldPostings.findIndex((p, j) => !used.has(j) && String(p.account_id) === String(ln[0]));
     if (k >= 0) { used.add(k); assigned[i] = oldPostings[k]; }
   });
@@ -363,11 +474,13 @@ export function makeRecords(form, ctx) {
   });
   const postings = lines.map((ln, i) => {
     const sign = ln[1];
+    const lc = ln.length > 2 ? ln[2] : cad;
+    const lo = ln.length > 2 ? ln[3] : amount;
     return {
       posting_id: assigned[i] ? assigned[i].posting_id : newId('p'),
       txn_id: txnId, line_id: '', account_id: String(ln[0]),
-      amount_cad: sign * cad, amount_orig: sign * amount, currency: ccy, fx_rate: rate,
-      memo: '', updated_at: now, deleted: false
+      amount_cad: round(sign * lc, 2), amount_orig: round(sign * lo, decimals(ccy)), currency: ccy, fx_rate: rate,
+      memo: ln[5] || '', owner: ln[4] || '', updated_at: now, deleted: false
     };
   });
   oldPostings.forEach((p, j) => {
@@ -387,7 +500,7 @@ export function makeRecords(form, ctx) {
   });
 
   let rule = null;
-  if ((kind === 'EXPENSE' || kind === 'INCOME') && !passthrough && txn.merchant) {
+  if ((kind === 'EXPENSE' || kind === 'INCOME') && !passthrough && !split && txn.merchant) {
     rule = learnRule(rules, txn.merchant, categoryId, now);
   }
   return { txn, postings, rule };
@@ -448,6 +561,7 @@ export function searchItems(items, query) {
   return items.filter((it) => {
     const t = it.txn, d = it.desc;
     const hay = [t.date, t.merchant, t.memo, t.trip_tag, t.owner, t.currency, d.categoryName, d.accountName,
+      (d.lines || []).map((l) => l.name + ' ' + l.owner + ' ' + l.memo).join(' '),
       d.fromName, d.toName, String(num(t.total_cad)), num(t.total_cad).toFixed(2),
       num(t.total_cad).toLocaleString('en-CA', { minimumFractionDigits: 2 }),
       String(num(t.total_orig))].join(' ').toLowerCase();

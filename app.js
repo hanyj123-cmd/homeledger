@@ -8,6 +8,35 @@ import * as fx from './js/fx.js';
 import * as settingsui from './js/settingsui.js';
 import { registerSW } from './js/pwa.js';
 import { CONFIG } from './js/config.js';
+import * as prefs from './js/prefs.js';
+import { icon } from './js/icons.js';
+import { openPrintReport } from './js/printreport.js';
+
+// 머리 오른쪽: 인쇄 · 한/영 버튼
+function setupHeaderButtons() {
+  const lb = document.getElementById('lang-btn');
+  if (lb) {
+    const cur = prefs.lang();
+    lb.textContent = cur === 'ko' ? '한' : cur === 'en' ? 'EN' : '한/A';
+    const next = cur === 'ko' ? 'en' : 'ko';
+    const lab = cur === 'ko' ? 'Language: Korean — tap for English (언어: 한국어 — 누르면 영어)' : cur === 'en' ? 'Language: English — tap for Korean (언어: 영어 — 누르면 한국어)' : 'Language: both — tap for Korean only (언어: 둘 다 — 누르면 한국어만)';
+    lb.setAttribute('aria-label', lab); lb.title = lab;
+    lb.addEventListener('click', () => { prefs.setLang(next); try { location.reload(); } catch (e) { /* ignore */ } });
+  }
+  // 탭을 바꿀 때만 화면이 부드럽게 올라오는 효과 (자동 동기화로 다시 그릴 때는 효과 없음)
+  const view = document.getElementById('view');
+  let enterTimer = null;
+  const enter = () => { if (!view) return; view.classList.add('hl-enter'); clearTimeout(enterTimer); enterTimer = setTimeout(() => view.classList.remove('hl-enter'), 700); };
+  enter();
+  document.addEventListener('click', (e) => { if (e.target && e.target.closest && e.target.closest('.tabs button[data-tab], .moremenu button')) enter(); }, true);
+  const pb = document.getElementById('print-btn');
+  if (pb) {
+    pb.replaceChildren(icon('print', 20));
+    pb.addEventListener('click', () => {
+      try { openPrintReport(ui.pageApi(), { tab: ui.state.tab }); } catch (e) { console.error('[print]', e); }
+    });
+  }
+}
 
 // 로그인 후 환율을 하루 한 번 자동으로 최신화 (실패해도 조용히 넘어갑니다)
 async function autoFx() {
@@ -42,6 +71,8 @@ function showUpdateBanner(apply) {
 
 export async function start() {
   theme.applyAppearance();
+  try { prefs.startTranslating(document); } catch (e) { console.error('[lang]', e); }
+  setupHeaderButtons();
   try {
     lock.initLock({
       idleMinutes: settingsui.getIdleMinutes(),

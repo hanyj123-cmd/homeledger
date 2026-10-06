@@ -172,6 +172,21 @@ export async function pull(opts) {
   return res;
 }
 
+// 보낼 행에 값이 있는데 시트 헤더에 없는 열(HEADERS 에는 있는 것)이 있으면 시트 1행에 그 열을 추가하고,
+// 저장해 둔 헤더('headers:<시트>')도 바꿉니다. 그래야 값이 버려지지 않고, 변경분 읽기(headersMatch)도 계속 맞습니다.
+// 헤더를 아직 모르면(한 번도 안 읽음) 나중에 추가된 열(TAIL 뒤의 열)에 값이 있을 때만 시트에서 헤더를 읽어 확인합니다.
+export async function ensureColumns(sheet, stored, rows) {
+  const def = HEADERS[sheet] || [];
+  const base = Array.isArray(stored) && stored.length ? stored : null;
+  const hasVal = (h) => rows.some((r) => r && r[h] !== undefined && r[h] !== null && r[h] !== '');
+  const late = def.slice(def.indexOf('deleted') + 1);
+  const missing = def.filter((h) => (base ? base.indexOf(h) < 0 : late.indexOf(h) >= 0) && hasVal(h));
+  if (!missing.length) return base;
+  const next = await api.ensureHeaders(sheet, missing, def);
+  await S.setMeta('headers:' + sheet, next);
+  return next;
+}
+
 export async function flush() {
   const ops = await S.getOutbox();
   if (!ops.length) return;
@@ -179,7 +194,7 @@ export async function flush() {
   const fresh = await api.pullIds(sheets);
   for (const s of sheets) await S.setMeta('rowIndex:' + s, fresh[s] || {});
   for (const op of ops) {
-    const headers = (await S.getMeta('headers:' + op.sheet)) || HEADERS[op.sheet];
+    const headers = (await ensureColumns(op.sheet, await S.getMeta('headers:' + op.sheet), op.rows)) || HEADERS[op.sheet];
     const idx = (await S.getMeta('rowIndex:' + op.sheet)) || {};
     const keyCol = KEYS[op.sheet];
     const items = op.rows.map((r) => ({ obj: r, row: idx[String(r[keyCol])] || null }));

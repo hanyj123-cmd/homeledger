@@ -11,7 +11,7 @@ export const CONFIG = {
   SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines', 'Receipts', 'LineItems', 'Budgets'],
   AUTO_SYNC_MS: 60000,
   RECEIPT_API_URL: 'https://script.google.com/macros/s/AKfycbzMiItzeZw23yPNth8Fk7khP3DP012RoMIxHBrVFvyxc2kwrjHttlSEePdLWf9diNrv/exec',
-  APP_VERSION: '0.12.1'
+  APP_VERSION: '0.13.0'
 };
 
 // 각 시트의 첫 번째 열 = 행의 고유 키
@@ -46,8 +46,9 @@ export const HEADERS = {
     'fx_rate', 'fx_source', 'fx_status', 'total_cad',
     'source', 'status', 'owner', 'trip_tag', 'is_passthrough',
     'receipt_id', 'statement_line_id', 'created_at'].concat(TAIL),
+  // owner(나눈 줄의 소유자)는 v0.13 에 추가 — 기존 시트의 열 위치가 밀리지 않도록 맨 끝에 둡니다 (sync.ensureColumns 가 시트에 자동 추가)
   Postings: ['posting_id', 'txn_id', 'line_id', 'account_id', 'amount_cad', 'amount_orig',
-    'currency', 'fx_rate', 'memo'].concat(TAIL),
+    'currency', 'fx_rate', 'memo'].concat(TAIL, ['owner']),
   ImportProfiles: ['profile_id', 'account_id', 'has_header', 'date_col', 'date_format', 'year_source',
     'desc_cols', 'debit_col', 'credit_col', 'amount_col', 'sign_flip', 'skip_rows_regex'].concat(TAIL),
   StatementLines: ['stmt_line_id', 'import_id', 'account_id', 'date', 'description_raw', 'merchant_norm',

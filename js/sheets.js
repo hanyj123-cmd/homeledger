@@ -177,6 +177,38 @@ export async function pullIds(names) {
   return out;
 }
 
+// ── 새 열 추가 ────────────────────────────────────────────────────────────
+// 앱이 새 열(예: Postings 의 owner)을 쓰기 시작했는데 시트 1행(헤더)에 그 이름이 없으면,
+// 1행을 새로 읽어 없는 이름만 다음 빈 열에 붙입니다. (이미 있으면 아무것도 쓰지 않음 → 여러 번 불러도 안전)
+// fallback: 1행이 아예 비어 있는 새 시트일 때 쓸 전체 헤더.
+// 돌려주는 값: 실제 시트의 새 헤더 배열.
+export async function ensureHeaders(sheet, names, fallback) {
+  const data = await call('/values:batchGet?valueRenderOption=UNFORMATTED_VALUE&' + rangesQuery([sheet], 'A1:' + MAX_COL + '1'));
+  const head = (((data.valueRanges && data.valueRanges[0] && data.valueRanges[0].values) || [])[0] || []).map((v) => (v === null || v === undefined ? '' : String(v)));
+  const add = names.filter((n) => head.indexOf(n) < 0);
+  if (!add.length) return head;
+  const next = head.some(Boolean) ? head.concat(add) : (fallback && fallback.length ? fallback.concat(add.filter((n) => fallback.indexOf(n) < 0)) : add);
+  if (next.length > MAX_COL_NUM) throw new Error(sheet + ' 시트의 열이 너무 많습니다 (' + next.length + ').');
+  const write = () => call('/values:batchUpdate', {
+    method: 'POST',
+    body: JSON.stringify({ valueInputOption: 'RAW', data: [{ range: sheet + '!A1', values: [next] }] })
+  });
+  try {
+    await write();
+  } catch (e) {
+    // 시트 칸 수가 모자라면(열을 지워 둔 시트) 열을 늘린 뒤 한 번 더
+    if (!(e && e.status === 400 && /grid limits|exceeds/i.test(e.message || ''))) throw e;
+    const meta = await call('?fields=sheets.properties(sheetId,title,gridProperties.columnCount)');
+    const sh = ((meta && meta.sheets) || []).map((x) => x.properties || {}).find((p) => p.title === sheet);
+    if (!sh) throw e;
+    const have = (sh.gridProperties && sh.gridProperties.columnCount) || 0;
+    const need = Math.max(1, next.length - have);
+    await call(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [{ appendDimension: { sheetId: sh.sheetId, dimension: 'COLUMNS', length: need } }] }) });
+    await write();
+  }
+  return next;
+}
+
 // items: [{ obj, row }]  row 가 있으면 그 행을 덮어쓰고, 없으면 맨 아래에 추가합니다.
 // 돌려주는 값: { id: 행번호 }
 export async function writeRows(sheet, headers, items) {

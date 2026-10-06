@@ -16,6 +16,8 @@ import * as syncMod from './sync.js';
 import { icon } from './icons.js';
 import { rulesCard } from './rulesui.js';
 import * as MG from './migrate.js';
+import { categoriesCard } from './catform.js';
+import * as prefs from './prefs.js';
 
 export const IDLE_KEY = 'hl_lock_idle';
 export const OWNER_KEY = 'hl_default_owner';
@@ -218,6 +220,12 @@ export function render(api) {
         onclick: () => { theme.setTheme(t[0]); redraw(); }
       }, icon(t[1], 26), h('b', null, t[2]), h('span', { class: 'ko' }, t[3])))),
       note('Auto follows your device (자동은 기기의 밝게/어둡게 설정을 따라갑니다). The ', h('span', { class: 'set-inl' }, icon('sun', 15)), ' button at the top also changes this (화면 위쪽 버튼으로도 바꿀 수 있어요).'),
+      h('h3', { class: 'set-sub' }, 'Language (언어)'),
+      h('div', { class: 'segtd set-lang', role: 'radiogroup', id: 'set-lang' }, [['ko', '한국어'], ['en', 'English'], ['both', 'Both (둘 다)']].map(([v, lab]) => h('button', {
+        type: 'button', role: 'radio', class: prefs.lang() === v ? 'on' : '', 'aria-checked': String(prefs.lang() === v), 'data-lang-opt': v,
+        onclick: () => { if (prefs.lang() === v) return; prefs.setLang(v); try { if (!globalThis.__HL_TEST__) location.reload(); } catch (e) { /* ignore */ } redraw(); }
+      }, lab))),
+      note('Menus and labels show only the language you pick. The 한/EN button at the top switches too (고른 언어로만 메뉴가 보여요. 위쪽 한/EN 버튼으로도 바꿀 수 있어요).'),
       h('h3', { class: 'set-sub' }, 'Text size (글자 크기)'),
       h('div', { class: 'set-scale' },
         h('button', { type: 'button', class: 'set-step', id: 'set-scale-down', 'aria-label': 'Smaller text (글자 작게)', disabled: idx <= 0, onclick: () => { theme.stepScale(-1); redraw(); } }, 'A−'),
@@ -611,7 +619,7 @@ export function render(api) {
   });
 
   // ═════ 배치 ═════
-  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secRules, secInstall, secData, secMigrate);
+  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secRules, categoriesCard(api, icon), secInstall, secData, secMigrate);
   root.append(h('div', { class: 'page set-page', }, grid,
     h('div', { class: 'set-foot' },
       h('div', { class: 'muted small', id: 'set-foot-ver' }, 'Home Ledger v' + CONFIG.APP_VERSION),

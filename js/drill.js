@@ -147,7 +147,8 @@ function build() {
         : null),
       h('div', { class: 'mm' },
         h('div', { class: 'mt' }, t.merchant || t.memo || dsc.categoryName),
-        h('div', { class: 'ms' }, [L.dayLabel(t.date), dsc.accountName, spec.mode === 'acct' ? (cat ? cat.name : dsc.categoryName) : null].filter(Boolean).join(' · '))),
+        h('div', { class: 'ms' }, [L.dayLabel(t.date), dsc.accountName, spec.mode === 'acct' || dsc.split ? (cat && !dsc.split ? cat.name : dsc.categoryName) : null].filter(Boolean).join(' · ')),
+        dsc.split ? splitList(it, spec, fmt, h) : null),
       h('div', { class: 'am' + (r.v < 0 ? ' neg' : '') }, spec.mode === 'acct' && !simple ? h('span', { class: 'ro' }, sign + fmt(Math.abs(r.v))) : amtEl),
       h('div', { class: 'ed' },
         catSelect(it),
@@ -174,6 +175,17 @@ function build() {
   return panel;
 
   function rerender() { if (cur) mount(); }
+}
+
+// 나눈 거래: 줄마다 카테고리 · 소유자 · 메모 · 금액 (이 상세에 해당하는 줄은 굵게)
+function splitList(it, spec, fmt, h) {
+  const ids = new Set((spec.ids || []).map(String));
+  const ccy = it.txn.currency || 'CAD';
+  return h('ul', { class: 'dr-split', 'aria-label': L.SPLIT_LABEL(it.desc.split) },
+    it.desc.lines.map((l) => h('li', { class: ids.has(l.accountId) ? 'hit' : '' },
+      h('span', { class: 'n' }, l.name),
+      h('span', { class: 'o' }, [l.owner || it.txn.owner || '', l.memo].filter(Boolean).join(' · ')),
+      h('span', { class: 'a' }, (l.cad < 0 ? '−' : '') + fmt(Math.abs(l.cad)) + (ccy !== 'CAD' ? ' (' + fmt(Math.abs(l.orig), ccy) + ')' : '')))));
 }
 
 async function edit(it, patch, askRemember) {

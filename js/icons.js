@@ -80,13 +80,13 @@ export function icon(name, size, cls) {
   return t.content.firstChild || document.createTextNode('');
 }
 
-// 로고: 둥근 초록 면 위에 지붕과 장부 줄. (집 + 장부 = 우리집 장부)
+// 로고: 평평한 초록 면 위에 집 윤곽과 $ (집 + 돈 = 우리집 장부). 그라데이션 없이 단색.
+export const LOGO_BG = '#1f7a1f';
 export const LOGO_PATHS =
-  '<path d="M13.5 31 32 14.8 50.5 31" stroke="#fff" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' +
-  '<path d="M19 28.6V46a3.4 3.4 0 0 0 3.4 3.4h19.2A3.4 3.4 0 0 0 45 46V28.6" stroke="#fff" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' +
-  '<path d="M25.5 35.2h13M25.5 41.4h8" stroke="#feef60" stroke-width="3.4" stroke-linecap="round" fill="none"/>';
+  '<path d="M12.5 30.5 32 13.5l19.5 17" stroke="#fff" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' +
+  '<path d="M18 27v19.6a3.4 3.4 0 0 0 3.4 3.4h21.2a3.4 3.4 0 0 0 3.4-3.4V27" stroke="#fff" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' +
+  '<path d="M36.6 31.6c-.9-1.5-2.6-2.4-4.6-2.4-2.6 0-4.5 1.3-4.5 3.3 0 4.6 9.6 2.4 9.6 7.4 0 2.1-2 3.4-4.9 3.4-2.3 0-4.1-.9-5.1-2.5M32 26.2v3M32 43.3v3" stroke="#ffe55c" stroke-width="3.1" stroke-linecap="round" stroke-linejoin="round" fill="none"/>';
 
-export function logoSvg(size, id) {
-  const g = 'lg' + (id || '');
-  return '<svg class="logo" width="' + size + '" height="' + size + '" viewBox="0 0 64 64" role="img" aria-label="Home Ledger"><defs><linearGradient id="' + g + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4fb52c"/><stop offset="1" stop-color="#2c7a1a"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#' + g + ')"/>' + LOGO_PATHS + '</svg>';
+export function logoSvg(size) {
+  return '<svg class="logo" width="' + size + '" height="' + size + '" viewBox="0 0 64 64" role="img" aria-label="Home Ledger"><rect width="64" height="64" rx="15" fill="' + LOGO_BG + '"/>' + LOGO_PATHS + '</svg>';
 }

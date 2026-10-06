@@ -289,14 +289,14 @@ export function ownerTable(items, accMap, ms) {
   const by = new Map();
   items.forEach((it) => {
     if (!set.has(L.monthOf(it.txn.date))) return;
-    const o = it.txn.owner || 'Joint';
-    const e = by.get(o) || { owner: o, income: 0, expense: 0 };
     it.ps.forEach((p) => {
       const a = accMap.get(String(p.account_id));
-      if (!a) return;
-      if (a.type === 'INCOME') e.income -= L.num(p.amount_cad); else if (a.type === 'EXPENSE') e.expense += L.num(p.amount_cad);
+      if (!a || (a.type !== 'INCOME' && a.type !== 'EXPENSE')) return;
+      const o = p.owner || it.txn.owner || 'Joint';     // 나눈 거래는 줄마다 소유자가 있을 수 있음
+      const e = by.get(o) || { owner: o, income: 0, expense: 0 };
+      if (a.type === 'INCOME') e.income -= L.num(p.amount_cad); else e.expense += L.num(p.amount_cad);
+      by.set(o, e);
     });
-    by.set(o, e);
   });
   return Array.from(by.values()).map((e) => ({ owner: e.owner, income: r2(e.income), expense: r2(e.expense), net: r2(e.income - e.expense) })).filter((e) => e.income || e.expense).sort((a, b) => b.expense - a.expense);
 }

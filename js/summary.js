@@ -9,6 +9,7 @@ import * as ai from './ai.js';
 import * as drill from './drill.js';
 import * as T from './summary-text.js';
 import { icon } from './icons.js';
+import { openPrintReport } from './printreport.js';
 import { layoutOf } from './layout.js';
 import { barChart, lineChart, donut, hbars, waterfall, sparkline, compact } from './charts.js';
 
@@ -673,7 +674,7 @@ export function render(api) {
     try { ta.focus(); ta.select(); } catch (e) { /* ignore */ }
   }
   function doPrint() {
-    try { if (typeof window.print === 'function') window.print(); else api.toast('Printing is not supported here (이 기기에서는 인쇄를 쓸 수 없어요)'); } catch (e) { api.toast('Could not open print (인쇄 창을 열지 못했어요)'); }
+    try { openPrintReport(api.pageApi ? api.pageApi() : api, { tab: 'summary' }); } catch (e) { api.toast('Could not open print (인쇄 창을 열지 못했어요)'); }
   }
 
   // ───────── 빈 상태 ─────────
