@@ -5,6 +5,7 @@ import * as sync from './sync.js';
 import * as auth from './auth.js';
 import * as importui from './importui.js';
 import * as reports from './reports.js';
+import * as receiptui from './receiptui.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, ccy) => L.fmtMoney(n, ccy);
@@ -83,6 +84,7 @@ export async function init() {
     });
   });
   $('fab').addEventListener('click', () => openForm(null));
+  $('fab-scan').addEventListener('click', () => receiptui.openScan(receiptApi()));
   $('chip').addEventListener('click', onChip);
   sync.onStatus(renderChip);
   sync.onData(async () => { await reload(); renderBody(); });
@@ -129,6 +131,7 @@ export function renderChip() {
 function renderAll() {
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-tab') === state.tab));
   $('fab').hidden = state.tab !== 'txns';
+  $('fab-scan').hidden = state.tab !== 'txns';
   renderChip();
   renderBody(true);
 }
@@ -167,7 +170,10 @@ function renderTxns() {
     type: 'search', id: 'q', placeholder: 'Search (검색): merchant, amount, account…', value: state.query,
     oninput: (e) => { state.query = e.target.value; renderList(); }
   });
-  v.append(h('div', { class: 'masthead' }, nav, h('div', { class: 'summary', id: 'summary' })), search, h('div', { id: 'list' }));
+  const actions = h('div', { class: 'actions' },
+    h('button', { type: 'button', class: 'btn', id: 'add-btn', onclick: () => openForm(null) }, '+ New (거래 추가)'),
+    h('button', { type: 'button', class: 'btn secondary', id: 'scan-btn', onclick: () => receiptui.openScan(receiptApi()) }, '📷 Receipt (영수증)'));
+  v.append(h('div', { class: 'masthead' }, nav, h('div', { class: 'summary', id: 'summary' })), actions, search, h('div', { id: 'list' }));
   renderList();
 }
 
@@ -186,7 +192,7 @@ function renderList() {
   list.replaceChildren();
   if (q) list.append(h('div', { class: 'note' }, items.length + ' result(s) (검색 결과 ' + items.length + '건) — all months (전체 기간)'));
   if (!items.length) {
-    list.append(h('div', { class: 'card center muted' }, q ? 'No matches (일치하는 거래가 없습니다)' : 'No transactions this month (이번 달 거래가 없습니다). Tap + to add (+ 버튼으로 추가)'));
+    list.append(h('div', { class: 'card center muted' }, q ? 'No matches (일치하는 거래가 없습니다)' : 'No transactions this month (이번 달 거래가 없습니다). Tap New to add (위의 버튼으로 추가)'));
     return;
   }
   const CAP = 200;
@@ -314,7 +320,10 @@ function renderSettings() {
 
 const KIND_LABELS = [['EXPENSE', 'Expense (지출)'], ['INCOME', 'Income (수입)'], ['TRANSFER', 'Transfer (이체)'], ['OPENING', 'Opening (기초잔액)']];
 
+const receiptApi = () => ({ h, toast, state, fmt, reload, renderBody });
+
 export function openForm(txnId) {
+  if (txnId && receiptui.isReceiptTxn(state, txnId)) { receiptui.openEdit(receiptApi(), txnId); return; }
   const d = state.d;
   const data = state.data;
   const existing = txnId ? d.itemById.get(String(txnId)) : null;

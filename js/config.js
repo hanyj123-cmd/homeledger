@@ -8,9 +8,10 @@ export const CONFIG = {
   OWNERS: ['Patrick', 'Ms Kim', 'Joint'],
   CLEARING_ID: '2900',   // Passthrough Clearing (전달 자금)
   OPENING_ID: '3010',    // Opening Balance Equity (기초 잔액 자본)
-  SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines'],
+  SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines', 'Receipts', 'LineItems'],
   AUTO_SYNC_MS: 60000,
-  APP_VERSION: '0.6.0'
+  RECEIPT_API_URL: 'https://script.google.com/macros/s/AKfycbzMiItzeZw23yPNth8Fk7khP3DP012RoMIxHBrVFvyxc2kwrjHttlSEePdLWf9diNrv/exec',
+  APP_VERSION: '0.7.0'
 };
 
 // 각 시트의 첫 번째 열 = 행의 고유 키
@@ -23,7 +24,9 @@ export const KEYS = {
   Transactions: 'txn_id',
   Postings: 'posting_id',
   ImportProfiles: 'profile_id',
-  StatementLines: 'stmt_line_id'
+  StatementLines: 'stmt_line_id',
+  Receipts: 'receipt_id',
+  LineItems: 'line_id'
 };
 
 const TAIL = ['updated_at', 'deleted'];
@@ -48,5 +51,10 @@ export const HEADERS = {
     'desc_cols', 'debit_col', 'credit_col', 'amount_col', 'sign_flip', 'skip_rows_regex'].concat(TAIL),
   StatementLines: ['stmt_line_id', 'import_id', 'account_id', 'date', 'description_raw', 'merchant_norm',
     'amount', 'currency', 'foreign_amount_hint', 'foreign_currency_hint', 'dedupe_key',
-    'match_status', 'matched_txn_id', 'match_score', 'rule_id'].concat(TAIL)
+    'match_status', 'matched_txn_id', 'match_score', 'rule_id'].concat(TAIL),
+  Receipts: ['receipt_id', 'txn_id', 'drive_file_id', 'file_name', 'mime', 'sha256',
+    'parse_status', 'parse_model', 'parsed_json', 'confidence', 'error', 'uploaded_at'].concat(TAIL),
+  LineItems: ['line_id', 'txn_id', 'line_no', 'item_name', 'item_name_raw', 'qty', 'unit_price',
+    'line_amount', 'is_discount', 'tax_code', 'tax_amount', 'category_account_id',
+    'ai_confidence', 'user_confirmed'].concat(TAIL)
 };

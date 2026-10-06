@@ -270,3 +270,29 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 0.86rem; 
   .sheet { animation: none; }
   .fab:active { transform: none; }
 }
+
+/* ───── 영수증 ───── */
+.fab-scan {
+  bottom: calc(160px + env(safe-area-inset-bottom)); width: 52px; height: 52px; border-radius: 17px;
+  background: var(--surface); color: var(--ink); border: 1.5px solid var(--ink); display: flex; align-items: center; justify-content: center;
+}
+.rc-thumb { float: right; width: 60px; height: 80px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); margin: 0 0 8px 10px; }
+.rc-item { padding: 10px 12px; margin-bottom: 8px; border-left: 6px solid var(--shield); }
+.rc-item.disc { border-left-color: var(--warn); }
+.rc-item-top { display: grid; grid-template-columns: 1fr 96px 40px; gap: 6px; align-items: center; margin-bottom: 6px; }
+.rc-item-top .rc-amt { text-align: right; font-weight: 800; }
+.rc-item-bot { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.rc-item-bot:has(.rc-tax) { grid-template-columns: 1fr 112px; }
+.rc-item select { font-size: 14px; }
+.rc-del { width: 40px; height: 40px; font-size: 1rem; color: var(--muted); }
+.rc-disc { margin: 6px 0 0; min-height: 36px; }
+.rc-sum { padding: 10px 12px; margin: 10px 0; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+.rc-line { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: 0.88rem; }
+.rc-line.strong { font-weight: 800; border-top: 1px solid var(--line); margin-top: 3px; padding-top: 6px; }
+.ok-hint { color: var(--in); font-weight: 700; margin: 6px 0 0; }
+
+/* 거래 추가 / 영수증 버튼은 목록 위에 둡니다 (오른쪽 금액을 가리지 않도록 떠 있는 버튼은 숨김) */
+.fab, .fab-scan { display: none !important; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: min(100% - 28px, 680px); margin: 14px auto 0; }
+.actions .btn { min-height: 48px; padding: 0 8px; font-size: 0.9rem; }
+.actions + input[type="search"] { margin-top: 10px; }
