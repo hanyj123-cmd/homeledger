@@ -481,3 +481,17 @@ input[type="search"] { border-radius: 16px; }
 .actions.bg-actions { width: auto; margin: 12px 0 0; }
 .bg-row .row-main { min-width: 0; }
 .bg-row .bar { margin-top: 7px; }
+
+/* ───── 자동 분류 표시 / 기억하기 ───── */
+.imp-line { position: relative; }
+.src { display: inline-block; justify-self: start; margin-top: 2px; padding: 2px 9px; border-radius: 999px; font-size: 0.66rem; font-weight: 700; background: var(--glass); border: 1px solid var(--glass-edge); color: var(--muted); }
+.src[hidden] { display: none; }
+.src-rule { color: var(--accent-ink); border-color: var(--accessible); }
+.src-history { color: var(--accent-ink); }
+.src-ai { color: var(--heather); border-color: var(--heather); }
+.src-user { color: var(--ink); }
+.rm-row { align-items: flex-start; min-height: 48px; padding: 6px 0; border-bottom: 1px solid var(--line); margin: 0; }
+.rm-row:last-of-type { border-bottom: 0; }
+.rm-row input { margin-top: 2px; }
+.rm-cat { color: var(--accent-ink); }
+#imp-ai { display: grid; gap: 8px; }

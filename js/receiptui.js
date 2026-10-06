@@ -4,6 +4,7 @@ import * as L from './ledger.js';
 import * as R from './receipts.js';
 import * as sync from './sync.js';
 import * as auth from './auth.js';
+import { openRemember } from './rememberui.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -280,7 +281,6 @@ function openReview(api, draft, close, show, shell) {
       const puts = { Transactions: [res.txn], Postings: res.postings, LineItems: res.lineItems };
       const order = ['Receipts', 'LineItems', 'Postings', 'Transactions'];
       if (res.receipt) puts.Receipts = [res.receipt];
-      if (res.rule) { puts.Rules = [res.rule]; order.push('Rules'); }
       await sync.saveBatch(puts, order);
       if (draft.fromId) { try { localStorage.setItem('hl_last_from', draft.fromId); } catch (e) { /* ignore */ } }
       if (res.txn.date && L.monthOf(res.txn.date) !== api.state.month && !api.state.query) api.state.month = L.monthOf(res.txn.date);
@@ -288,6 +288,11 @@ function openReview(api, draft, close, show, shell) {
       api.toast(auth.getToken() ? 'Saved (저장됨)' : 'Saved offline — will upload after sign-in (오프라인 저장, 로그인 후 전송)');
       await api.reload();
       api.renderBody(true);
+      const cur = res.rule ? L.suggestRule(data.rules, res.txn.merchant) : null;
+      if (!editing && res.rule && !(cur && String(cur.account_id) === String(res.rule.account_id))) {
+        await openRemember({ h, toast: api.toast, accMap: d.accMap, data: api.state.data, reload: api.reload },
+          [{ merchant: res.txn.merchant, accountId: String(res.rule.account_id), previousAccountId: cur ? String(cur.account_id) : '' }]);
+      }
     } catch (e) {
       saving = false;
       if (btn) btn.disabled = false;

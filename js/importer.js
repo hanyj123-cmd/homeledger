@@ -5,6 +5,7 @@
 //   - 입출금 계좌: 출금 +, 입금 −   - 카드: 사용 +, 결제/환불 −
 import { CONFIG } from './config.js';
 import * as L from './ledger.js';
+import { makeGuesser } from './categorize.js';
 
 export const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 export const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
@@ -493,15 +494,17 @@ export function buildPreview(parsedLines, ctx) {
   const fresh = parsedLines.filter((l) => !l.dup);
   const matches = matchLines(fresh, accountId, ctx.items || [], claimed);
   const mById = new Map(fresh.map((l, i) => [l, matches[i]]));
+  const guess = makeGuesser({ rules: ctx.rules, items: ctx.items, accounts: ctx.accounts || Array.from(ctx.accMap.values()), accMap: ctx.accMap, statementAccountId: accountId });
   return parsedLines.map((ln) => {
-    const rule = L.suggestRule(ctx.rules || [], ln.merchant);
-    let target = rule ? String(rule.account_id) : '';
-    if (!target || !ctx.accMap.has(target) || target === accountId) target = ctx.accMap.has(UNCATEGORIZED_ID) ? UNCATEGORIZED_ID : '';
+    const g = guess(ln.merchant || ln.description, ln.amount > 0 ? 'out' : 'in');
+    let target = g ? g.accountId : '';
+    let source = g ? g.source : '';
+    if (!target || !ctx.accMap.has(target) || target === accountId) { target = ctx.accMap.has(UNCATEGORIZED_ID) ? UNCATEGORIZED_ID : ''; source = ''; }
     const m = mById.get(ln) || null;
     let action = 'NEW';
     if (ln.dup) action = 'SKIP';
     else if (m && m.score >= AUTO_MATCH_SCORE) action = 'MATCH';
-    return { line: ln, action, target, ruleId: rule ? rule.rule_id : '', match: m, touched: false };
+    return { line: ln, action, target, source, confidence: source && g ? g.confidence : 0, ruleId: g && g.ruleId ? g.ruleId : '', match: m, touched: false, original: target };
   });
 }
 
@@ -529,6 +532,7 @@ export function buildRecords(rows, ctx) {
   const puts = { Transactions: [], Postings: [], StatementLines: [], Rules: [], ImportProfiles: [] };
   const rules = (ctx.rules || []).slice();
   const ruleOut = new Map();
+  const remember = new Map();
   const counts = { created: 0, matched: 0, skipped: 0 };
   const owner0 = acct && (acct.owner === 'Patrick' || acct.owner === 'Ms Kim') ? acct.owner : 'Joint';
 
@@ -571,13 +575,12 @@ export function buildRecords(rows, ctx) {
       });
       sl.match_status = 'CREATED'; sl.matched_txn_id = txnId;
       counts.created++;
-      if (String(target.account_id) !== UNCATEGORIZED_ID && L.normMerchant(ln.merchant)) {
-        const learned = L.learnRule(rules, ln.merchant, target.account_id, now);
-        if (learned) {
-          const i = rules.findIndex((x) => x.rule_id === learned.rule_id);
-          if (i >= 0) rules[i] = learned; else rules.push(learned);
-          ruleOut.set(learned.rule_id, learned);
-          sl.rule_id = learned.rule_id;
+      // 내가 직접 고른 분류만, 기억할지 물어봅니다 (자동으로 규칙을 만들지 않습니다).
+      const key = L.normMerchant(ln.merchant);
+      if (r.touched && key && String(target.account_id) !== UNCATEGORIZED_ID && !remember.has(key)) {
+        const cur = L.suggestRule(rules, ln.merchant);
+        if (!cur || String(cur.account_id) !== String(target.account_id)) {
+          remember.set(key, { merchant: ln.merchant, accountId: String(target.account_id), previousAccountId: cur ? String(cur.account_id) : '' });
         }
       }
     }
@@ -593,7 +596,7 @@ export function buildRecords(rows, ctx) {
       updated_at: now, deleted: false
     });
   }
-  return { puts, counts, importId };
+  return { puts, counts, importId, remember: Array.from(remember.values()) };
 }
 
 // 저장된 열 설정 → profile 객체
@@ -606,4 +609,19 @@ export function profileFromRow(row) {
     credit_col: s(row.credit_col), amount_col: s(row.amount_col), sign_flip: L.truthy(row.sign_flip),
     skip_rows_regex: s(row.skip_rows_regex) || DEFAULT_SKIP_RE
   };
+}
+
+// "기억할까요?"에서 고른 항목 → Rules 행들
+export function rulesFromRemember(entries, rules, now) {
+  const cur = (rules || []).slice();
+  const out = [];
+  (entries || []).forEach((e) => {
+    const r = L.learnRule(cur, e.merchant, e.accountId, now);
+    if (!r) return;
+    const i = cur.findIndex((x) => x.rule_id === r.rule_id);
+    if (i >= 0) cur[i] = r; else cur.push(r);
+    const j = out.findIndex((x) => x.rule_id === r.rule_id);
+    if (j >= 0) out[j] = r; else out.push(r);
+  });
+  return out;
 }

@@ -6,6 +6,7 @@ import * as auth from './auth.js';
 import * as importui from './importui.js';
 import * as reports from './reports.js';
 import * as receiptui from './receiptui.js';
+import { openRemember } from './rememberui.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, ccy) => L.fmtMoney(n, ccy);
@@ -527,6 +528,11 @@ export function openForm(txnId) {
     if (saving) return;
     const res = L.makeRecords(f, { accMap: d.accMap, rules: data.rules, existing, now: L.nowIso() });
     if (res.error) { errEl.textContent = res.error; return; }
+    // 규칙은 자동으로 만들지 않고, 새로 정한 분류일 때만 저장 후에 물어봅니다.
+    const cand = res.rule; res.rule = null;
+    const cur = cand ? L.suggestRule(data.rules, res.txn.merchant) : null;
+    const ask = cand && !(cur && String(cur.account_id) === String(cand.account_id)) && f.categoryTouched !== false && (!existing || String(existing.desc.categoryId) !== String(f.categoryId))
+      ? [{ merchant: res.txn.merchant, accountId: String(cand.account_id), previousAccountId: cur ? String(cur.account_id) : '' }] : [];
     saving = true;
     $('f-save').disabled = true;
     try {
@@ -537,6 +543,7 @@ export function openForm(txnId) {
       toast(auth.getToken() ? 'Saved (저장됨)' : 'Saved offline — will upload after sign-in (오프라인 저장, 로그인 후 전송)');
       await reload();
       renderBody(true);
+      if (ask.length) await openRemember({ h, toast, accMap: d.accMap, data: state.data, reload }, ask);
     } catch (e) {
       saving = false;
       $('f-save').disabled = false;

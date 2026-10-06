@@ -3,16 +3,18 @@
 import * as L from './importer.js';
 import * as Lg from './ledger.js';
 import * as sync from './sync.js';
+import { openRemember } from './rememberui.js';
+import { SOURCE_LABEL, askAI } from './categorize.js';
 import { CONFIG } from './config.js';
 
 // 화면이 바뀌어도 작업 중이던 내용을 유지합니다.
 const S = {
   accountId: '', fileName: '', kind: '', rows: [], profile: null, profileFrom: '', promptYear: String(new Date().getFullYear()),
-  parsed: null, preview: [], busy: false, error: '', libs: null, done: null
+  parsed: null, preview: [], busy: false, error: '', libs: null, done: null, aiBusy: false, aiMsg: ''
 };
 
 export function reset() {
-  Object.assign(S, { fileName: '', kind: '', rows: [], profile: null, profileFrom: '', parsed: null, preview: [], busy: false, error: '', done: null });
+  Object.assign(S, { fileName: '', kind: '', rows: [], profile: null, profileFrom: '', parsed: null, preview: [], busy: false, error: '', done: null, aiBusy: false, aiMsg: '' });
 }
 
 export function resetIfDone() { if (S.done) reset(); }
@@ -92,7 +94,7 @@ export function render(api) {
     const parsed = L.applyProfile(S.rows, S.profile, { filename: S.fileName, promptYear: S.promptYear });
     S.parsed = parsed;
     S.preview = L.buildPreview(parsed.lines, {
-      accountId: S.accountId, accMap: api.accMap, rules: api.data.rules, items: api.items, stmtLines: api.data.stmtLines
+      accountId: S.accountId, accMap: api.accMap, accounts: api.accounts, rules: api.data.rules, items: api.items, stmtLines: api.data.stmtLines
     });
     draw();
   }
@@ -163,7 +165,7 @@ export function render(api) {
     }
     if (!parsed.lines.length) {
       wrap.append(h('div', { class: 'card muted' }, 'No lines could be read yet (읽힌 줄이 없습니다). Adjust the column layout above (위의 열 설정을 조정하세요).'),
-        skippedNote());
+        skippedNote() || '');
       return wrap;
     }
     const t = L.previewTotals(S.preview);
@@ -177,7 +179,9 @@ export function render(api) {
         stat('Lines (줄)', t.count + (t.dups ? ' · dup ' + t.dups : ''), '')),
       flipBox,
       h('div', { class: 'note', id: 'imp-sum' }, 'New (신규) ' + t.news + ' · Linked to existing (기존 거래와 연결) ' + t.matched + ' · Skipped (제외) ' + t.skipped),
-      skippedNote());
+      h('div', { class: 'note', id: 'imp-auto' }, autoSummary()),
+      aiBox() || '',
+      skippedNote() || '');
     const list = h('div', { id: 'imp-lines' });
     const targetOpts = buildTargetOptions();
     const selects = new Map();
@@ -189,6 +193,40 @@ export function render(api) {
           'Import ' + (t.news + t.matched) + ' line(s) (' + (t.news + t.matched) + '건 가져오기)'),
         h('button', { type: 'button', class: 'btn secondary', onclick: () => { reset(); draw(); } }, 'Cancel (취소)')));
     return wrap;
+  }
+
+  function pending() { return S.preview.filter((r) => r.action === 'NEW' && String(r.target) === L.UNCATEGORIZED_ID && !r.touched); }
+  function autoSummary() {
+    const nw = S.preview.filter((r) => r.action === 'NEW');
+    const auto = nw.filter((r) => r.source && !r.touched).length;
+    return 'Auto-categorized (자동 분류) ' + auto + ' · Needs your pick (직접 선택 필요) ' + pending().length;
+  }
+  function aiBox() {
+    const left = pending();
+    const names = Array.from(new Set(left.map((r) => r.line.merchant).filter(Boolean)));
+    if (!names.length && !S.aiMsg) return null;
+    return h('div', { class: 'card', id: 'imp-ai' },
+      names.length ? h('button', { type: 'button', class: 'btn secondary', id: 'imp-ai-btn', disabled: S.aiBusy, onclick: runAI },
+        S.aiBusy ? 'Asking AI… (물어보는 중)' : '✨ Ask AI for the remaining ' + names.length + ' (남은 ' + names.length + '곳 AI에게 물어보기)') : null,
+      names.length ? h('div', { class: 'muted small' }, 'Only store names are sent — no amounts, dates or accounts. (가게 이름만 전송됩니다. 금액·날짜·계좌는 보내지 않습니다.)') : null,
+      S.aiMsg ? h('div', { class: 'note', id: 'imp-ai-msg' }, S.aiMsg) : null);
+  }
+  async function runAI() {
+    const left = pending();
+    const names = Array.from(new Set(left.map((r) => r.line.merchant).filter(Boolean)));
+    S.aiBusy = true; S.aiMsg = ''; draw();
+    try {
+      const got = await askAI(names, api.accounts);
+      let n = 0;
+      S.preview.forEach((r) => {
+        const g = got.get(r.line.merchant);
+        if (g && r.action === 'NEW' && String(r.target) === L.UNCATEGORIZED_ID && !r.touched && g.accountId !== String(S.accountId)) { r.target = g.accountId; r.source = 'ai'; r.confidence = g.confidence; n++; }
+      });
+      S.aiMsg = n ? 'AI categorized ' + n + ' line(s) — please check them (AI가 ' + n + '줄을 분류했습니다. 꼭 확인하세요).' : 'AI could not decide these (AI도 판단하지 못했습니다).';
+    } catch (e) {
+      S.aiMsg = 'AI failed (AI 실패): ' + (e && e.message ? e.message : e);
+    }
+    S.aiBusy = false; draw();
   }
 
   function stat(label, value, cls) {
@@ -234,16 +272,17 @@ export function render(api) {
     tSel.className = 'imp-target';
     tSel.setAttribute('aria-label', 'Category (카테고리)');
     tSel.addEventListener('change', () => {
-      r.target = tSel.value; r.touched = true;
+      r.target = tSel.value; r.touched = true; r.source = 'user'; setBadge();
       const norm = Lg.normMerchant(ln.merchant);
       if (norm) S.preview.forEach((o, j) => {
         if (o !== r && !o.touched && o.action === 'NEW' && Lg.normMerchant(o.line.merchant) === norm) {
-          o.target = r.target;
+          o.target = r.target; o.source = 'user';
           const s2 = selects.get(j);
           if (s2) { s2.value = r.target; s2.closest('.imp-line').classList.remove('review'); }
         }
       });
       tSel.closest('.imp-line').classList.toggle('review', tSel.value === L.UNCATEGORIZED_ID);
+      const au = root.querySelector('#imp-auto'); if (au) au.textContent = autoSummary();
     });
     selects.set(i, tSel);
     const aSel = h('select', {
@@ -258,6 +297,14 @@ export function render(api) {
         ? '→ ' + (r.match.item.txn.merchant || r.match.item.txn.memo || r.match.item.desc.categoryName) + ' · ' + r.match.item.txn.date + ' · match ' + Math.round(r.match.score * 100) + '%'
         : (r.match && r.action !== 'MATCH' ? 'possible match (유사 거래): ' + (r.match.item.txn.merchant || '') + ' ' + Math.round(r.match.score * 100) + '%' : '');
       el.classList.toggle('skipped', r.action === 'SKIP');
+      if (typeof setBadge === 'function') setBadge();
+    };
+    const badge = h('span', { class: 'src' });
+    const setBadge = () => {
+      const lab = r.source && SOURCE_LABEL[r.source];
+      badge.textContent = lab && r.target !== L.UNCATEGORIZED_ID ? lab : '';
+      badge.className = 'src' + (r.source ? ' src-' + r.source : '');
+      badge.hidden = !badge.textContent || r.action !== 'NEW';
     };
     const el = h('div', { class: 'card imp-line' + (r.target === L.UNCATEGORIZED_ID ? ' review' : '') },
       h('div', { class: 'row-main' },
@@ -265,8 +312,9 @@ export function render(api) {
         h('div', { class: 'row-sub' }, ln.date + (ln.foreign ? ' · ' + ln.foreign.currency + ' ' + ln.foreign.amount : ''))),
       h('div', { class: 'row-amt ' + (out ? 'out' : 'in') }, (out ? '↓ ' : '↑ ') + fmt(Math.abs(ln.amount))),
       matchNote,
-      h('div', { class: 'two' }, aSel, targetWrap));
-    toggle();
+      h('div', { class: 'two' }, aSel, targetWrap),
+      badge);
+    toggle(); setBadge();
     return el;
   }
 
@@ -296,6 +344,7 @@ export function render(api) {
       S.done = { counts: rec.counts, month: dates.length ? Lg.monthOf(dates[dates.length - 1]) : '', review: S.preview.filter((r) => r.action === 'NEW' && String(r.target) === L.UNCATEGORIZED_ID).length };
       await api.reload();
       draw();
+      if (rec.remember && rec.remember.length) await openRemember(api, rec.remember);
     } catch (e) {
       btn.disabled = false;
       errEl.textContent = 'Import failed (가져오기 실패): ' + (e && e.message ? e.message : e);
