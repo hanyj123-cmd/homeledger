@@ -87,11 +87,12 @@ export async function commit(puts, outboxOps) {
 }
 
 // 시트에서 받아온 행으로 로컬을 갱신합니다. protect 에 든 키(전송 대기 중인 행)는 건드리지 않습니다.
-export async function mergeRemote(store, rows, protect) {
+// keepKeys(선택): 시트에 남아 있는 모든 키. 주면 rows 는 "바뀐 행만" 이어도 됩니다. (delta 동기화용)
+export async function mergeRemote(store, rows, protect, keepKeys) {
   const db = await openDB();
   const keyPath = KEYS[store];
   const existingKeys = await reqP(db.transaction(store, 'readonly').objectStore(store).getAllKeys());
-  const remoteKeys = new Set(rows.map((r) => String(r[keyPath])));
+  const remoteKeys = keepKeys ? new Set(Array.from(keepKeys, String)) : new Set(rows.map((r) => String(r[keyPath])));
   const tx = db.transaction(store, 'readwrite');
   const os = tx.objectStore(store);
   existingKeys.forEach((k) => {

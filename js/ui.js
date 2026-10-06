@@ -11,11 +11,20 @@ import * as activity from './activity.js';
 import * as drill from './drill.js';
 import { icon, logoSvg } from './icons.js';
 import { initLayout, onLayout } from './layout.js';
+import * as M from './meta.js';
+import * as V from './valuation.js';
+import * as I from './insights.js';
+import * as summary from './summary.js';
+import * as plan from './plan.js';
+import * as wealth from './wealth.js';
+import * as settingsui from './settingsui.js';
+import * as theme from './theme.js';
+import * as fx from './fx.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, ccy) => L.fmtMoney(n, ccy);
 
-export const state = { tab: 'txns', month: L.monthOf(L.todayStr()), query: '', acct: '', kind: '', filterOpen: false, repSel: new Set(), data: null, d: null };
+export const state = { tab: 'summary', rev: 0, month: L.monthOf(L.todayStr()), query: '', acct: '', kind: '', filterOpen: false, repSel: new Set(), data: null, d: null };
 
 // 아주 작은 DOM 도우미
 export function h(tag, attrs, ...kids) {
@@ -45,7 +54,7 @@ export function toast(msg) {
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 2800);
+  toastTimer = setTimeout(() => { t.hidden = true; }, Math.max(2800, String(msg).length * 120));
 }
 
 // ───────── 데이터 ─────────
@@ -76,17 +85,96 @@ function derive(data) {
 async function reload() {
   state.data = await sync.loadAll();
   state.d = derive(state.data);
+  state.rev++;
+  state.metaCache = null;
+  state.anCache = null;
+}
+
+/** 설정(Settings 시트의 JSON) — 데이터가 바뀔 때만 다시 읽음 */
+function metaAll() {
+  if (!state.metaCache) state.metaCache = M.readAll(state.data.settings);
+  return state.metaCache;
+}
+const overridesFor = (ym) => V.overridesFor(metaAll(), state.d.items, ym);
+
+/** 요약·조언 계산 결과 (같은 데이터·같은 달·같은 날이면 한 번만 계산) */
+function analysis() {
+  const today = L.todayStr();
+  const k = state.rev + '|' + state.month + '|' + today;
+  if (!state.anCache || state.anCache.k !== k) {
+    state.anCache = { k, v: I.analyze({ accounts: state.data.accounts.filter(L.isActive), items: state.d.items, accMap: state.d.accMap, budgets: state.data.budgets || [], meta: metaAll(), ym: state.month, today }) };
+  }
+  return state.anCache.v;
+}
+
+/** 화면 모듈(summary / plan / wealth / settings …)이 쓰는 공용 도구 모음 */
+export function pageApi(extra) {
+  return Object.assign({
+    h, fmt, toast, state, icon,
+    data: state.data, d: state.d, items: state.d.items, accounts: state.data.accounts, accMap: state.d.accMap,
+    meta: metaAll, overridesFor, analysis, today: L.todayStr(),
+    saveSettings: async (rows) => { await sync.saveBatch({ Settings: [].concat(rows).filter(Boolean) }, ['Settings']); await reload(); renderBody(true); },
+    saveBudgets: async (rows) => { await sync.saveBatch({ Budgets: rows }, ['Budgets']); await reload(); renderBody(true); },
+    saveBatch: async (puts, order) => { await sync.saveBatch(puts, order); await reload(); renderBody(true); },
+    reload, rerender: () => renderBody(true),
+    openForm: (id, defaults) => openForm(id, defaults),
+    openScan: () => receiptui.openScan(receiptApi()),
+    go: (tab, patch) => { Object.assign(state, patch || {}); state.tab = tab; drill.close(); renderAll(); },
+    goSearch: (text) => { state.query = text; state.acct = ''; state.tab = 'txns'; drill.close(); renderAll(); },
+    drillApi, auth, sync, theme
+  }, extra || {});
 }
 
 // ───────── 시작 ─────────
 
+const SEC_TABS = [['accounts', 'accounts', 'Accounts', '계좌'], ['import', 'import', 'Import', '가져오기'], ['settings', 'settings', 'Settings', '설정']];
+
+function paintThemeBtn() {
+  const b = $('theme-btn');
+  if (!b) return;
+  const t = theme.getTheme();
+  b.replaceChildren(icon(t === 'dark' ? 'moon' : t === 'light' ? 'sun' : 'auto', 20));
+  const name = t === 'dark' ? 'Dark (어둡게)' : t === 'light' ? 'Light (밝게)' : 'Auto (시스템 따라)';
+  b.setAttribute('aria-label', 'Theme: ' + name + ' — tap to change (누르면 바뀝니다)');
+  b.title = 'Theme: ' + name;
+}
+
+function closeMore() {
+  const m = document.querySelector('.moremenu');
+  if (m) m.remove();
+  const b = $('tab-more');
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
+function toggleMore() {
+  if (document.querySelector('.moremenu')) { closeMore(); return; }
+  const menu = h('div', { class: 'moremenu', role: 'menu' }, SEC_TABS.map((t) => h('button', {
+    type: 'button', role: 'menuitem', class: state.tab === t[0] ? 'on' : '',
+    onclick: () => { closeMore(); state.tab = t[0]; drill.close(); if (t[0] === 'import') importui.resetIfDone(); renderAll(); }
+  }, icon(t[1], 22), h('span', null, t[2]), h('span', { class: 'ko' }, t[3]))));
+  document.body.append(menu);
+  $('tab-more').setAttribute('aria-expanded', 'true');
+  setTimeout(() => document.addEventListener('click', function off(e) {
+    if (!menu.contains(e.target) && e.target.closest('#tab-more') === null) { closeMore(); document.removeEventListener('click', off); }
+  }), 0);
+}
+
 export async function init() {
   initLayout();
+  theme.applyAppearance();
+  paintThemeBtn();
+  $('theme-btn')?.addEventListener('click', () => {
+    const t = theme.cycleTheme();
+    paintThemeBtn();
+    toast(t === 'dark' ? 'Dark mode (어두운 화면)' : t === 'light' ? 'Light mode (밝은 화면)' : 'Auto — follows your device (기기 설정을 따라갑니다)');
+  });
+  theme.onSystemThemeChange(() => paintThemeBtn());
+  $('tab-more')?.addEventListener('click', toggleMore);
   const logo = $('logo');
   if (logo) logo.innerHTML = logoSvg(34, 'hl-logo');
   document.querySelectorAll('.tabs [data-ic]').forEach((el) => { el.replaceChildren(icon(el.getAttribute('data-ic'), 24)); });
-  document.querySelectorAll('.tabs button').forEach((b) => {
+  document.querySelectorAll('.tabs button[data-tab]').forEach((b) => {
     b.addEventListener('click', () => {
+      closeMore();
       state.tab = b.getAttribute('data-tab');
       drill.close();
       if (state.tab === 'import') importui.resetIfDone();
@@ -141,7 +229,8 @@ export function renderChip() {
 }
 
 function renderAll() {
-  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-tab') === state.tab));
+  document.querySelectorAll('.tabs button[data-tab]').forEach((b) => b.classList.toggle('on', b.getAttribute('data-tab') === state.tab));
+  $('tab-more')?.classList.toggle('on', SEC_TABS.some((t) => t[0] === state.tab));
   $('fab').hidden = state.tab !== 'txns';
   $('fab-scan').hidden = state.tab !== 'txns';
   renderChip();
@@ -152,12 +241,30 @@ export function renderBody(force) {
   if (!state.d) return;
   if (!force && state.tab === 'import' && importui._state().parsed && !importui._state().done) return;
   if (!force && state.tab === 'txns' && $('q') && document.activeElement === $('q')) return;
-  if (state.tab === 'txns') renderTxns();
+  if (state.tab === 'summary') renderPage(summary);
+  else if (state.tab === 'plan') renderPage(plan);
+  else if (state.tab === 'wealth') renderPage(wealth);
+  else if (state.tab === 'txns') renderTxns();
   else if (state.tab === 'accounts') renderAccounts();
   else if (state.tab === 'reports') renderReports();
   else if (state.tab === 'import') renderImport();
-  else renderSettings();
-  if (state.tab === 'txns' || state.tab === 'reports') drill.restore(drillApi()); else drill.close();
+  else renderPage(settingsui, renderSettings);
+  if (state.tab === 'txns' || state.tab === 'reports' || state.tab === 'summary') drill.restore(drillApi()); else drill.close();
+  if (typeof window !== 'undefined' && window.scrollTo && force === true && !state.keepScroll) { /* 탭을 바꿨을 때만 위로 */ }
+}
+
+/** 새 화면 모듈을 그리기. 모듈이 오류를 내도 다른 탭은 멀쩡하게 */
+function renderPage(mod, fallback) {
+  const v = $('view');
+  v.replaceChildren();
+  if (!state.data.accounts.length) { v.append(emptyState()); return; }
+  try {
+    v.append(mod.render(pageApi()));
+  } catch (e) {
+    console.error(e);
+    if (fallback) { fallback(); return; }
+    v.append(h('div', { class: 'card warn-card', role: 'alert' }, '이 화면을 그리는 중 오류가 났어요: ' + (e && e.message ? e.message : e) + ' — 다른 탭은 정상입니다. 새로고침 해보세요.'));
+  }
 }
 
 /** 상세 패널(drill)이 쓰는 도구 모음 */
@@ -207,7 +314,7 @@ function renderReports() {
   v.replaceChildren();
   if (!state.data.accounts.length) { v.append(emptyState()); return; }
   v.append(reports.render({
-    h, fmt, toast, state, items: state.d.items, accounts: state.data.accounts, accMap: state.d.accMap, data: state.data,
+    h, fmt, toast, state, items: state.d.items, accounts: state.data.accounts, accMap: state.d.accMap, data: state.data, overridesFor, pageApi,
     saveBudgets: async (rows) => { await sync.saveBatch({ Budgets: rows }, ['Budgets']); await reload(); renderReports(); },
     rerender: () => { renderReports(); drill.restore(drillApi()); },
     openForm: (id, defaults) => openForm(id, defaults),
@@ -242,6 +349,7 @@ function renderAccounts() {
   if (!state.data.accounts.length) { v.append(emptyState()); return; }
   const accounts = state.data.accounts.filter(L.isActive);
   const bal = L.accountBalances(accounts, d.items.flatMap((i) => i.ps));
+  overridesFor(L.monthOf(L.todayStr())).forEach((v, id) => { if (bal.has(id)) bal.set(id, v); });
   const nw = L.netWorth(accounts, bal);
   v.append(banner('Accounts (계좌)', [
     { label: 'Net worth (순자산)', value: (nw.net < 0 ? '−' : '') + fmt(Math.abs(nw.net)), id: 'ac-net' },
@@ -323,6 +431,7 @@ export function openForm(txnId, defaults) {
     f = L.newForm();
     try { f.fromId = localStorage.getItem('hl_last_from') || ''; } catch (e) { /* ignore */ }
     if (!d.accMap.has(String(f.fromId))) f.fromId = '';
+    try { f.owner = settingsui.defaultOwner(metaAll().users, auth.getState().email) || f.owner; } catch (e) { /* 기본값 유지 */ }
     const df = defaults || {};
     if (df.kind) f.kind = df.kind;
     if (df.fromId) f.fromId = String(df.fromId);
@@ -420,7 +529,7 @@ export function openForm(txnId, defaults) {
           id: 'f-ccy', class: 'ccy', 'aria-label': 'Currency (통화)',
           onchange: (e) => {
             f.currency = e.target.value;
-            if (f.currency !== 'CAD' && !f.rateText) { const r = L.latestRate(data.fxRates, f.currency); if (r) f.rateText = String(r); }
+            if (f.currency !== 'CAD' && !f.rateText) { const r = fx.rateOn(data.fxRates, f.currency, f.date) || L.latestRate(data.fxRates, f.currency); if (r) f.rateText = String(r); }
             draw();
           }
         }, CONFIG.CURRENCIES.map((c) => h('option', { value: c, selected: c === f.currency }, c)))),

@@ -1,0 +1,192 @@
+/* Home Ledger — 앱 잠금 화면 (js/lock.js 가 #lock 을 만듭니다)
+   어두운 초록 유리 느낌의 배경 · 흰 알약 키패드 · TD 초록 포인트.
+   라이트/다크와 상관없이 같은 모양(밝은 글자 + 어두운 초록 바탕)이고, 다크에서는 조금 더 어둡습니다. */
+
+.lock {
+  --lk-a: #0e2d09;                        /* 배경 그라데이션 (어두운 쪽) */
+  --lk-b: #1c4c12;
+  --lk-c: #3b8a25;                        /* TD 초록 */
+  --lk-veil: rgba(9, 32, 7, 0.86);        /* 유리 위의 색 막 */
+  --lk-hi: #7be05a;                       /* 포인트(채워진 점, 포커스) */
+  --lk-pill: #ffffff;
+  --lk-pill-hover: #f0f8ec;
+  --lk-pill-down: #d7edcc;
+  --lk-pill-ink: #12300c;
+  --lk-err: #ffb59c;
+  --lk-fn-bg: rgba(255, 255, 255, 0.13);
+  --lk-fn-line: rgba(255, 255, 255, 0.28);
+
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  color: #fff;
+  font-family: var(--font, "Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  touch-action: manipulation;
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  /* 유리를 못 쓰는 브라우저: 뒤가 비치지 않는 불투명 초록 */
+  background:
+    radial-gradient(120% 70% at 50% -10%, rgba(59, 138, 37, 0.7), transparent 62%),
+    linear-gradient(165deg, var(--lk-b) 0%, var(--lk-a) 70%);
+  animation: lock-in 0.22s ease-out both;
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .lock {
+    background:
+      radial-gradient(120% 70% at 50% -10%, rgba(59, 138, 37, 0.55), transparent 62%),
+      var(--lk-veil);
+    -webkit-backdrop-filter: blur(28px) saturate(150%);
+    backdrop-filter: blur(28px) saturate(150%);
+  }
+}
+.lock:focus { outline: none; }
+.lock.is-out { animation: lock-out 0.18s ease-in both; pointer-events: none; }
+
+html.hl-locked, html.hl-locked body { overflow: hidden; }
+
+/* 배경에서 천천히 떠다니는 빛 번짐 */
+.lock-glow { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.lock-glow::before, .lock-glow::after {
+  content: ""; position: absolute; border-radius: 50%; filter: blur(60px); opacity: 0.55;
+}
+.lock-glow::before { width: 46vmax; height: 46vmax; left: -14vmax; bottom: -18vmax; background: var(--lk-c); animation: lock-drift 18s ease-in-out infinite alternate; }
+.lock-glow::after { width: 34vmax; height: 34vmax; right: -10vmax; top: -12vmax; background: #254f1a; opacity: 0.7; animation: lock-drift 24s ease-in-out infinite alternate-reverse; }
+
+.lock-panel {
+  position: relative; width: min(100%, 332px);
+  display: flex; flex-direction: column; align-items: center;
+  margin: auto;
+}
+
+/* ── 로고 · 제목 */
+.lock-head { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.lock-logo { position: relative; display: block; line-height: 0; }
+.lock-logo .logo { width: 60px; height: 60px; border-radius: 16px; box-shadow: 0 10px 26px -8px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.18); }
+.lock-badge {
+  position: absolute; right: -7px; bottom: -7px; width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center; line-height: 0;
+  background: #fff; color: var(--lk-a); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35);
+}
+.lock-title { margin: 16px 0 0; font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.lock-sub { margin: 6px 0 0; font-size: 0.95rem; font-weight: 500; color: rgba(255, 255, 255, 0.82); }
+
+/* ── 점 표시 */
+.lock-dots { display: flex; justify-content: center; gap: 15px; height: 22px; margin: 26px 0 6px; align-items: center; }
+.lock-dot {
+  display: block; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.6); background: transparent;
+  transition: background-color 0.12s, border-color 0.12s, transform 0.14s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+.lock-dot.on { background: var(--lk-hi); border-color: var(--lk-hi); transform: scale(1.18); box-shadow: 0 0 12px rgba(123, 224, 90, 0.55); }
+.lock.is-error .lock-dot { border-color: var(--lk-err); }
+.lock.is-shake .lock-dots { animation: lock-shake 0.44s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+
+.lock-msg {
+  margin: 0 0 14px; min-height: 2.7em; max-width: 100%; text-align: center;
+  font-size: 0.86rem; line-height: 1.35; color: rgba(255, 255, 255, 0.78);
+  word-break: keep-all; overflow-wrap: anywhere;
+}
+.lock-msg.err { color: var(--lk-err); }
+
+/* ── 키패드 */
+.lock-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 14px; width: 100%; }
+.lock-key {
+  display: flex; align-items: center; justify-content: center;
+  height: clamp(50px, 9vh, 66px); padding: 0; border: 0; border-radius: 999px;
+  background: var(--lk-pill); color: var(--lk-pill-ink);
+  font: inherit; font-size: 1.65rem; font-weight: 600; line-height: 1;
+  cursor: pointer; touch-action: manipulation;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) inset, 0 8px 16px -8px rgba(0, 0, 0, 0.55);
+  transition: transform 0.08s ease-out, background-color 0.14s, box-shadow 0.14s, opacity 0.2s;
+}
+.lock-key:hover { background: var(--lk-pill-hover); }
+.lock-key:active, .lock-key.is-press { background: var(--lk-pill-down); transform: scale(0.94); box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 3px 8px -6px rgba(0, 0, 0, 0.6); }
+.lock-key:focus-visible { outline: 3px solid var(--lk-hi); outline-offset: 3px; }
+.lock-key-gap { visibility: hidden; background: none; box-shadow: none; pointer-events: none; }
+.lock-key-fn {
+  background: var(--lk-fn-bg); color: #fff; box-shadow: none; border: 1px solid var(--lk-fn-line);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.lock-key-fn:hover { background: rgba(255, 255, 255, 0.22); }
+.lock-key-fn:active, .lock-key-fn.is-press { background: rgba(255, 255, 255, 0.3); box-shadow: none; }
+.lock-key:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
+.lock.is-wait .lock-key { opacity: 0.38; }
+
+.lock-forgot {
+  margin-top: 18px; padding: 8px 14px; border: 0; border-radius: 999px; background: transparent;
+  color: rgba(255, 255, 255, 0.78); font: inherit; font-size: 0.82rem; font-weight: 500; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(255, 255, 255, 0.35);
+}
+.lock-forgot:hover { color: #fff; }
+.lock-forgot:focus-visible { outline: 3px solid var(--lk-hi); outline-offset: 2px; }
+
+/* ── 다크: 한 단계 더 어둡게 (style.css 와 같은 방식: 시스템 다크 또는 설정에서 다크 고정) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lock { --lk-a: #07190a; --lk-b: #0f3010; --lk-veil: rgba(4, 16, 5, 0.8); --lk-pill: #eef6ea; --lk-pill-hover: #e3efdd; --lk-pill-down: #c9e0bf; }
+}
+:root[data-theme="dark"] .lock { --lk-a: #07190a; --lk-b: #0f3010; --lk-veil: rgba(4, 16, 5, 0.8); --lk-pill: #eef6ea; --lk-pill-hover: #e3efdd; --lk-pill-down: #c9e0bf; }
+
+/* ── 큰 화면 (아이패드 · 컴퓨터): 가운데에 유리 카드 */
+@media (min-width: 700px) and (min-height: 640px) {
+  .lock-panel {
+    width: 392px; padding: 40px 44px 36px; border-radius: 34px;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04));
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 30px 80px -24px rgba(0, 0, 0, 0.65), 0 1px 0 rgba(255, 255, 255, 0.25) inset;
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  }
+  .lock-logo .logo { width: 68px; height: 68px; border-radius: 18px; }
+  .lock-title { font-size: 1.6rem; }
+  .lock-key { height: 64px; }
+}
+
+/* ── 가로로 눕힌 폰 (낮은 화면): 왼쪽 안내 · 오른쪽 키패드 */
+@media (max-height: 520px) and (orientation: landscape) {
+  .lock-panel {
+    width: min(100%, 640px); display: grid; grid-template-columns: 1fr 1fr; column-gap: 44px; align-items: center; justify-items: center;
+    grid-template-areas: "head pad" "dots pad" "msg pad" "forgot pad";
+  }
+  .lock-head { grid-area: head; }
+  .lock-dots { grid-area: dots; margin: 16px 0 4px; }
+  .lock-msg { grid-area: msg; margin: 0; min-height: 2.4em; }
+  .lock-pad { grid-area: pad; gap: 8px 10px; }
+  .lock-forgot { grid-area: forgot; margin-top: 4px; }
+  .lock-key { height: 46px; font-size: 1.4rem; }
+  .lock-logo .logo { width: 48px; height: 48px; border-radius: 13px; }
+  .lock-title { margin-top: 10px; font-size: 1.25rem; }
+  .lock-sub { margin-top: 2px; }
+}
+/* 아주 낮은 세로 화면 (작은 폰 + 키보드 등) */
+@media (max-height: 640px) and (orientation: portrait) {
+  .lock-dots { margin: 16px 0 2px; }
+  .lock-title { margin-top: 10px; }
+  .lock-logo .logo { width: 48px; height: 48px; border-radius: 13px; }
+  .lock-msg { margin-bottom: 8px; }
+  .lock-pad { gap: 9px 12px; }
+}
+
+@keyframes lock-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes lock-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes lock-shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(5px); }
+  30%, 50%, 70% { transform: translateX(-9px); }
+  40%, 60% { transform: translateX(9px); }
+}
+@keyframes lock-drift { from { transform: translate3d(0, 0, 0) scale(1); } to { transform: translate3d(5vmax, -4vmax, 0) scale(1.15); } }
+
+/* 움직임 줄이기: 흔들림·번짐 없이, 색과 문구로만 알려 줍니다 */
+@media (prefers-reduced-motion: reduce) {
+  .lock, .lock *, .lock *::before, .lock *::after { animation: none !important; transition: none !important; }
+  .lock-key:active, .lock-key.is-press { transform: none; }
+}
+/* 고대비 / 강제 색상 */
+@media (forced-colors: active) {
+  .lock { background: Canvas; color: CanvasText; }
+  .lock-key { border: 2px solid ButtonText; background: ButtonFace; color: ButtonText; }
+  .lock-dot { border-color: CanvasText; }
+  .lock-dot.on { background: Highlight; border-color: Highlight; }
+}

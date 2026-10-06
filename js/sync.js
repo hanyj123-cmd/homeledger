@@ -8,7 +8,7 @@ import * as api from './sheets.js';
 import { getToken } from './auth.js';
 import { truthy, num, nowIso } from './ledger.js';
 
-const status = { phase: 'auth', pending: 0, lastSync: 0, error: '' };
+const status = { phase: 'auth', pending: 0, lastSync: 0, error: '', lastPullRows: 0, lastPullTotal: 0, lastPullMode: '' };
 const statusCbs = [];
 const dataCbs = [];
 let current = null;
@@ -57,16 +57,119 @@ async function pendingIds(sheet) {
   return set;
 }
 
-export async function pull() {
-  const data = await api.pullSheets(CONFIG.SYNC_SHEETS);
-  for (const name of CONFIG.SYNC_SHEETS) {
+// 전체 읽기를 이 시간(12시간)마다 한 번은 강제로 합니다. (시트를 손으로 고친 경우 등 updated_at 이 안 바뀐 변경을 잡는 안전망)
+export const FULL_PULL_MAX_AGE_MS = 12 * 3600e3;
+
+async function fullPull(names) {
+  const data = await api.pullSheets(names);
+  let fetched = 0;
+  for (const name of names) {
     const d = data[name];
     const protect = await pendingIds(name);
     await S.mergeRemote(name, d.rows, protect);
     await S.setMeta('rowIndex:' + name, d.rowIndex);
     await S.setMeta('headers:' + name, d.headers);
+    fetched += d.rows.length;
   }
+  return { fetched, total: fetched };
+}
+
+// 변경분만 읽기. 문제가 생기면 예외를 던지고, 호출한 쪽이 전체 읽기로 되돌아갑니다.
+// 헤더를 모르거나 바뀌었거나 행 수가 절반 넘게 줄어든 시트는 그 시트만 전체로 읽습니다.
+async function deltaPull(names) {
+  const headers = {};
+  for (const n of names) headers[n] = await S.getMeta('headers:' + n);
+  const stamps = await api.pullStamps(names, headers);
+  const fullNames = [];
+  const plans = {};
+  const rowsToGet = {};
+  for (const n of names) {
+    const st = stamps[n];
+    if (!st || !st.usable || !st.headersMatch) { fullNames.push(n); continue; }
+    const keyPath = KEYS[n];
+    const local = new Map((await S.getAll(n)).map((r) => [String(r[keyPath]), r]));
+    if (local.size > 0 && st.count < local.size * 0.5) { fullNames.push(n); continue; }
+    const protect = await pendingIds(n);
+    const need = [];
+    Object.keys(st.rowIndex).forEach((key) => {
+      if (protect.has(key)) return;
+      const l = local.get(key);
+      const ls = l && l.updated_at !== undefined && l.updated_at !== null ? String(l.updated_at) : '';
+      if (!l || ls !== st.stamps[key]) need.push(st.rowIndex[key]);
+    });
+    plans[n] = { st, need };
+    if (need.length) rowsToGet[n] = need;
+  }
+  const got = Object.keys(rowsToGet).length ? await api.pullRows(rowsToGet, headers) : {};
+  const full = fullNames.length ? await api.pullSheets(fullNames) : {};
+  // 읽는 사이에 시트 행이 밀렸다면(다른 기기가 삽입/삭제) 받은 행의 키가 다릅니다 → 예외 → 전체 읽기
+  const upserts = {};
+  for (const n of Object.keys(plans)) {
+    const { st, need } = plans[n];
+    const keyAt = {};
+    Object.keys(st.rowIndex).forEach((k) => { keyAt[st.rowIndex[k]] = k; });
+    upserts[n] = need.map((row) => {
+      const obj = got[n] && got[n][row];
+      if (!obj || obj[KEYS[n]] !== keyAt[row]) throw new Error('delta: 행 ' + n + '!' + row + ' 이(가) 그 사이 바뀌었습니다.');
+      return obj;
+    });
+  }
+  let fetched = 0;
+  let total = 0;
+  for (const n of Object.keys(plans)) {
+    const { st } = plans[n];
+    const protect = await pendingIds(n);
+    await S.mergeRemote(n, upserts[n], protect, Object.keys(st.rowIndex));
+    await S.setMeta('rowIndex:' + n, st.rowIndex);
+    fetched += upserts[n].length;
+    total += st.count;
+  }
+  for (const n of fullNames) {
+    const d = full[n];
+    const protect = await pendingIds(n);
+    await S.mergeRemote(n, d.rows, protect);
+    await S.setMeta('rowIndex:' + n, d.rowIndex);
+    await S.setMeta('headers:' + n, d.headers);
+    fetched += d.rows.length;
+    total += d.rows.length;
+  }
+  return { fetched, total, fullSheets: fullNames };
+}
+
+// 다시 시도해도 똑같이 실패할 오류(로그인/권한/호출 한도/서버 오류)는 전체 읽기로 넘어가지 않고 그대로 알립니다.
+function isRetryableByFull(e) {
+  if (e instanceof api.AuthError) return false;
+  const st = e && e.status;
+  if (st === 403 || st === 429 || st >= 500) return false;
+  return true;
+}
+
+// 시트 → 로컬. 평소에는 바뀐 행만 읽고(opts.full 이면 전부), 12시간마다/문제 시 전체를 읽습니다.
+// 돌려주는 값: { mode: 'full'|'delta', fetched, total, fullSheets }
+export async function pull(opts) {
+  const names = CONFIG.SYNC_SHEETS;
+  const lastFull = await S.getMeta('lastFullPull');
+  const age = Date.now() - (Number(lastFull) || 0);
+  let res = null;
+  if (!(opts && opts.full) && lastFull && age >= 0 && age < FULL_PULL_MAX_AGE_MS) {
+    try {
+      res = await deltaPull(names);
+      res.mode = 'delta';
+    } catch (e) {
+      if (!isRetryableByFull(e)) throw e;
+      res = null;
+    }
+  }
+  if (!res) {
+    res = await fullPull(names);
+    res.mode = 'full';
+    res.fullSheets = names.slice();
+  }
+  if (res.fullSheets.length === names.length) await S.setMeta('lastFullPull', Date.now());
   await S.setMeta('lastPull', Date.now());
+  await S.setMeta('lastPullStats', { mode: res.mode, fetched: res.fetched, total: res.total, at: Date.now() });
+  setStatus({ lastPullRows: res.fetched, lastPullTotal: res.total, lastPullMode: res.mode });
+  return res;
 }
 
 export async function flush() {
@@ -96,7 +199,7 @@ async function runOnce() {
     await pull();
     setStatus({ phase: 'idle', lastSync: Date.now(), error: '' });
   } catch (e) {
-    if (e instanceof api.AuthError) setStatus({ phase: 'auth' });
+    if (e instanceof api.AuthError) setStatus({ phase: 'auth', error: e instanceof api.ScopeError ? e.message : '' });
     else if (e instanceof TypeError) setStatus({ phase: 'offline' });
     else setStatus({ phase: 'error', error: String((e && e.message) || e) });
   } finally {
@@ -170,6 +273,7 @@ export async function reloadFromSheet() {
     const protect = await pendingIds(s);
     if (!protect.size) await S.clearStore(s);
   }
+  await S.setMeta('lastFullPull', 0); // 다음 동기화는 반드시 전체 읽기
   await sync();
 }
 

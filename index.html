@@ -12,10 +12,13 @@
   <link rel="apple-touch-icon" href="icon-180.png">
   <link rel="icon" href="icon-192.png">
   <title>Home Ledger</title>
+  <script>(function(){try{var t=localStorage.getItem("hl_theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);var z=parseFloat(localStorage.getItem("hl_scale"));if(z>0.7&&z<1.8)document.documentElement.style.setProperty("--ui-scale",String(z));}catch(e){}})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="charts.css">
+  <link rel="stylesheet" href="lock.css">
   <script src="https://accounts.google.com/gsi/client" defer></script>
   <script type="module" src="app.js"></script>
 </head>
@@ -26,16 +29,21 @@
       <span class="brand-text"><b>Home Ledger</b><i>우리집 장부</i></span>
     </div>
     <div class="top-actions">
+      <button id="theme-btn" class="iconbtn" type="button" aria-label="Theme (화면 모드)" title="Theme (화면 모드)"></button>
       <button id="chip" class="chip warn" type="button">● Sign in (로그인 필요)</button>
     </div>
   </header>
 
   <nav class="tabs" aria-label="Main">
-    <button type="button" data-tab="txns" class="on"><span class="ico" data-ic="ledger"></span><span class="lab"><span class="en">Ledger</span><span class="ko">거래</span></span></button>
-    <button type="button" data-tab="accounts"><span class="ico" data-ic="accounts"></span><span class="lab"><span class="en">Accounts</span><span class="ko">계좌</span></span></button>
+    <button type="button" data-tab="summary" class="on"><span class="ico" data-ic="summary"></span><span class="lab"><span class="en">Summary</span><span class="ko">요약</span></span></button>
+    <button type="button" data-tab="txns"><span class="ico" data-ic="ledger"></span><span class="lab"><span class="en">Ledger</span><span class="ko">거래</span></span></button>
     <button type="button" data-tab="reports"><span class="ico" data-ic="reports"></span><span class="lab"><span class="en">Reports</span><span class="ko">보고서</span></span></button>
-    <button type="button" data-tab="import"><span class="ico" data-ic="import"></span><span class="lab"><span class="en">Import</span><span class="ko">가져오기</span></span></button>
-    <button type="button" data-tab="settings"><span class="ico" data-ic="settings"></span><span class="lab"><span class="en">Settings</span><span class="ko">설정</span></span></button>
+    <button type="button" data-tab="plan"><span class="ico" data-ic="plan"></span><span class="lab"><span class="en">Plan</span><span class="ko">계획</span></span></button>
+    <button type="button" data-tab="wealth"><span class="ico" data-ic="wealth"></span><span class="lab"><span class="en">Wealth</span><span class="ko">자산·부채</span></span></button>
+    <button type="button" data-tab="accounts" data-sec="1"><span class="ico" data-ic="accounts"></span><span class="lab"><span class="en">Accounts</span><span class="ko">계좌</span></span></button>
+    <button type="button" data-tab="import" data-sec="1"><span class="ico" data-ic="import"></span><span class="lab"><span class="en">Import</span><span class="ko">가져오기</span></span></button>
+    <button type="button" data-tab="settings" data-sec="1"><span class="ico" data-ic="settings"></span><span class="lab"><span class="en">Settings</span><span class="ko">설정</span></span></button>
+    <button type="button" id="tab-more" class="morebtn" aria-haspopup="true" aria-expanded="false"><span class="ico" data-ic="more"></span><span class="lab"><span class="en">More</span><span class="ko">더보기</span></span></button>
   </nav>
 
   <main id="view"><div class="card center muted">Loading… (불러오는 중)</div></main>

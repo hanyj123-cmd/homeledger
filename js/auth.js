@@ -1,7 +1,10 @@
 // 구글 로그인 (Google Identity Services). 토큰은 1시간짜리입니다.
 // 앱을 닫았다 열어도 만료 전까지 유지되도록 기기에 보관하고, 만료되면 다음 터치 때 조용히 갱신을 시도합니다.
 import { CONFIG } from './config.js';
-import { setTokenProvider } from './sheets.js';
+import { setTokenProvider, setScopeErrorHandler, SCOPE_MESSAGE } from './sheets.js';
+
+const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+let needConsent = false;   // 권한 체크박스를 빼고 로그인했다면, 다음 로그인은 동의 화면을 반드시 다시 보여 줍니다
 
 const SS_KEY = 'hl_token';
 const EMAIL_KEY = 'hl_email';
@@ -60,6 +63,17 @@ async function onToken(resp) {
     if (pending) { pending.reject(new Error((resp && (resp.error_description || resp.error)) || '로그인 실패')); pending = null; }
     return;
   }
+  // 구글은 권한 항목을 하나씩 뺄 수 있게 해 줍니다. 시트 권한이 빠졌으면 토큰을 버리고 다시 안내합니다.
+  if (typeof google !== 'undefined' && google.accounts.oauth2.hasGrantedAllScopes
+      && !google.accounts.oauth2.hasGrantedAllScopes(resp, SHEETS_SCOPE)) {
+    needConsent = true;
+    token = null; expiresAt = 0;
+    try { google.accounts.oauth2.revoke(resp.access_token, () => {}); } catch (e) { /* ignore */ }
+    emit();
+    if (pending) { pending.reject(new Error(SCOPE_MESSAGE)); pending = null; }
+    return;
+  }
+  needConsent = false;
   token = resp.access_token;
   expiresAt = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
   try {
@@ -74,6 +88,7 @@ async function onToken(resp) {
 
 export function init() {
   setTokenProvider(getToken);
+  setScopeErrorHandler(() => { needConsent = true; token = null; expiresAt = 0; try { localStorage.removeItem(SS_KEY); sessionStorage.removeItem(SS_KEY); } catch (e) { /* ignore */ } emit(); });
   restore();
   let tries = 0;
   const wait = () => {
@@ -90,7 +105,7 @@ function armSilentRefresh() {
   if (typeof document === 'undefined' || !document.addEventListener) return;
   const h = (ev) => {
     if (getToken()) return;
-    if (!email || !tokenClient || pending || silent) return;
+    if (!email || !tokenClient || pending || silent || needConsent) return;
     const t = ev && ev.target;
     if (t && t.closest && t.closest('#chip, .btn')) return; // 로그인 버튼 자체를 누른 경우는 그쪽에서 처리
     silent = true;
@@ -108,7 +123,7 @@ export function signIn() {
     }
     silent = false;
     pending = { resolve, reject };
-    tokenClient.requestAccessToken(email ? { hint: email } : {});
+    tokenClient.requestAccessToken(Object.assign(email ? { hint: email } : {}, needConsent ? { prompt: 'consent' } : {}));
   });
 }
 
@@ -122,3 +137,5 @@ export function signOut() {
   try { localStorage.removeItem(SS_KEY); } catch (e) { /* ignore */ }
   emit();
 }
+
+export function needsConsent() { return needConsent; }
