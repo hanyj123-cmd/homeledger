@@ -296,3 +296,171 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 0.86rem; 
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: min(100% - 28px, 680px); margin: 14px auto 0; }
 .actions .btn { min-height: 48px; padding: 0 8px; font-size: 0.9rem; }
 .actions + input[type="search"] { margin-top: 10px; }
+
+/* ═════════════════════════════════════════════════════════════
+   Shield Glass — 유리 질감 레이어 (TD 팔레트는 그대로, 면만 반투명하게)
+   · 뒤에 은은한 색 번짐을 깔고, 머리·요약·카드·아래 탭·입력 창을 흐린 유리로 얹습니다.
+   · 글자는 유리 위에서도 4.5:1 이상. 투명 효과를 못 쓰는 기기/설정에서는 불투명 면으로 돌아갑니다.
+   ═════════════════════════════════════════════════════════════ */
+:root {
+  --bg: #eef2ea;
+  --line: rgba(28, 28, 28, 0.10);
+  --glass: rgba(255, 255, 255, 0.64);
+  --glass-strong: rgba(255, 255, 255, 0.86);
+  --glass-edge: rgba(255, 255, 255, 0.85);
+  --glass-shadow: 0 10px 32px -10px rgba(24, 64, 14, 0.22), 0 1px 2px rgba(24, 64, 14, 0.06);
+  --blur: blur(18px) saturate(1.6);
+  --band-bg: linear-gradient(162deg, #5adb2c 0%, #42bf19 42%, #2fa80f 100%);
+  --tile: rgba(255, 255, 255, 0.84);
+  --top-glass: linear-gradient(162deg, rgba(90, 219, 44, 0.86), rgba(47, 168, 15, 0.82));
+  --orb-a: rgba(66, 191, 25, 0.26); --orb-b: rgba(164, 214, 221, 0.60);
+  --orb-c: rgba(254, 239, 96, 0.30); --orb-d: rgba(201, 182, 207, 0.45);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0e0a;
+    --line: rgba(255, 255, 255, 0.10);
+    --glass: rgba(33, 40, 32, 0.56);
+    --glass-strong: rgba(28, 34, 27, 0.80);
+    --glass-edge: rgba(255, 255, 255, 0.10);
+    --glass-shadow: 0 12px 34px -10px rgba(0, 0, 0, 0.7), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --band-bg: linear-gradient(162deg, #2a3228 0%, #1a1e19 55%, #121511 100%);
+    --tile: rgba(255, 255, 255, 0.09);
+    --top-glass: linear-gradient(162deg, rgba(42, 50, 40, 0.80), rgba(18, 21, 17, 0.80));
+    --orb-a: rgba(66, 191, 25, 0.20); --orb-b: rgba(59, 91, 114, 0.50);
+    --orb-c: rgba(120, 112, 79, 0.22); --orb-d: rgba(133, 89, 145, 0.30);
+  }
+}
+
+body { position: relative; isolation: isolate; letter-spacing: -0.003em; padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(46% 30% at 8% 6%, var(--orb-a), transparent 72%),
+    radial-gradient(40% 30% at 98% 32%, var(--orb-b), transparent 72%),
+    radial-gradient(50% 34% at 14% 88%, var(--orb-c), transparent 72%),
+    radial-gradient(44% 30% at 96% 98%, var(--orb-d), transparent 72%),
+    var(--bg);
+}
+
+/* 머리 + 요약 띠: 살짝 빛이 도는 초록 유리 */
+.top {
+  background: var(--band-bg); color: var(--on-band);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .top { background: var(--top-glass); -webkit-backdrop-filter: blur(20px) saturate(1.5); backdrop-filter: blur(20px) saturate(1.5); }
+}
+@media (prefers-color-scheme: dark) {
+  .top { border-bottom: 1px solid rgba(66, 191, 25, 0.55); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+}
+.top h1 { font-weight: 800; letter-spacing: -0.02em; }
+.masthead {
+  background: var(--band-bg); border-radius: 0 0 30px 30px; padding-bottom: 20px; position: relative; overflow: hidden;
+  box-shadow: 0 18px 38px -18px rgba(37, 161, 6, 0.65);
+}
+.masthead::after {  /* 유리 위의 빛 번짐 */
+  content: ""; position: absolute; inset: -40% -20% auto auto; width: 70%; height: 140%; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.30), transparent 70%);
+}
+.masthead > * { position: relative; z-index: 1; }
+@media (prefers-color-scheme: dark) {
+  .masthead { box-shadow: 0 18px 38px -18px rgba(0, 0, 0, 0.8); border-bottom: 1px solid rgba(66, 191, 25, 0.35); }
+  .masthead::after { background: radial-gradient(closest-side, rgba(66, 191, 25, 0.22), transparent 70%); }
+}
+.monthlabel { font-size: 1.22rem; font-weight: 800; letter-spacing: -0.02em; }
+
+/* 유리 면: 요약 타일, 목록, 카드, 시트 */
+.stat, .masthead .stat {
+  background: var(--tile); border: 1px solid var(--glass-edge); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 6px 16px -8px rgba(10, 60, 0, 0.35);
+}
+@media (prefers-color-scheme: dark) { .stat, .masthead .stat { background: var(--tile); } .stat-l { color: #c4ccc0; } }
+.ledger, #list > .ledger, #list, .card, .rc-sum {
+  background: var(--glass); border: 1px solid var(--glass-edge); border-radius: 20px;
+  box-shadow: var(--glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.card { border-radius: 18px; }
+.row { background: transparent; }
+.row:active { background: rgba(66, 191, 25, 0.14); }
+.dayhead { background: rgba(255, 255, 255, 0.35); border-bottom: 1px solid var(--line); letter-spacing: 0.01em; }
+@media (prefers-color-scheme: dark) { .dayhead { background: rgba(255, 255, 255, 0.04); } }
+.rc-item { border-left-width: 5px; }
+.imp-line.review { border-color: var(--warn); }
+.warn-card { background: color-mix(in srgb, var(--warn) 9%, var(--glass)); border-color: var(--warn); }
+
+/* 입력 창 */
+input[type="search"], input[type="text"], input[type="date"], select {
+  background: rgba(255, 255, 255, 0.72); border: 1px solid rgba(28, 28, 28, 0.14); border-radius: 14px;
+  box-shadow: inset 0 1px 2px rgba(28, 28, 28, 0.05);
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+@media (prefers-color-scheme: dark) { input[type="search"], input[type="text"], input[type="date"], select { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.16); box-shadow: none; } }
+input:focus, select:focus { border-color: var(--accessible); box-shadow: 0 0 0 4px rgba(66, 191, 25, 0.22); outline: none; background: rgba(255, 255, 255, 0.92); }
+@media (prefers-color-scheme: dark) { input:focus, select:focus { background: rgba(255, 255, 255, 0.11); border-color: var(--shield); } }
+input[type="search"] { border-radius: 16px; }
+
+/* 버튼 */
+.btn { border-radius: 15px; background: linear-gradient(180deg, #55d62a, #42bf19 60%, #38b012); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 8px 18px -8px rgba(37, 161, 6, 0.7); letter-spacing: -0.01em; }
+.btn:active { filter: brightness(0.95); transform: translateY(1px); }
+.btn.secondary { background: var(--glass); border: 1px solid rgba(28, 28, 28, 0.28); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5); }
+.btn.danger { background: var(--glass); border: 1px solid var(--out); box-shadow: none; }
+@media (prefers-color-scheme: dark) { .btn.secondary { border-color: rgba(255, 255, 255, 0.28); } }
+.seg { background: var(--glass); border: 1px solid var(--glass-edge); border-radius: 16px; }
+.masthead .seg { background: rgba(255, 255, 255, 0.34); border: 1px solid rgba(255, 255, 255, 0.5); }
+@media (prefers-color-scheme: dark) { .masthead .seg { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.12); } }
+.seg button.on { border-radius: 12px; box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.4); }
+
+/* 아래 탭: 떠 있는 유리 알약 */
+.tabs {
+  left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); padding-bottom: 0; border-radius: 26px;
+  background: var(--glass-strong); border: 1px solid var(--glass-edge);
+  box-shadow: 0 16px 40px -12px rgba(10, 40, 4, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  max-width: 680px; margin: 0 auto;
+}
+.tabs button.on::before { top: 4px; left: 30%; right: 30%; height: 4px; border-radius: 4px; }
+.tabs button { padding: 12px 2px 9px; }
+
+/* 시트(입력 창) */
+.backdrop { background: rgba(14, 22, 12, 0.38); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.sheet {
+  background: var(--glass-strong); border: 1px solid var(--glass-edge); border-bottom: 0; border-radius: 28px 28px 0 0;
+  box-shadow: 0 -20px 50px -16px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+.sheet::before { content: ""; display: block; width: 40px; height: 5px; border-radius: 5px; margin: 0 auto 10px; background: var(--line); }
+.sheet-head h2 { letter-spacing: -0.02em; }
+.toast { background: rgba(28, 28, 28, 0.82); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border-radius: 16px; border-left: 0; border: 1px solid rgba(255, 255, 255, 0.14); bottom: calc(104px + env(safe-area-inset-bottom)); }
+.chip { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); border: 1px solid rgba(255, 255, 255, 0.6); }
+
+/* 영수증 진행 화면 */
+.rc-busy { display: grid; gap: 14px; justify-items: center; padding: 6px 0 14px; }
+.rc-prev { width: 120px; height: 160px; object-fit: cover; border-radius: 16px; border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow); background: var(--glass); }
+.rc-prev-empty { animation: pulse 1.4s ease-in-out infinite; }
+.rc-steps { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.rc-step { padding: 6px 12px; border-radius: 999px; font-size: 0.74rem; font-weight: 700; color: var(--muted); background: var(--glass); border: 1px solid var(--glass-edge); }
+.rc-step.now { color: var(--black); background: var(--shield); border-color: transparent; animation: pulse 1.2s ease-in-out infinite; }
+.rc-step.done { color: var(--accent-ink); }
+.rc-skel { width: 100%; display: grid; gap: 9px; }
+.rc-skel i { display: block; height: 14px; border-radius: 8px; background: linear-gradient(90deg, var(--line), rgba(255, 255, 255, 0.55), var(--line)); background-size: 220% 100%; animation: shimmer 1.3s linear infinite; }
+.rc-skel i:nth-child(2) { width: 82%; } .rc-skel i:nth-child(3) { width: 91%; } .rc-skel i:nth-child(4) { width: 60%; }
+@keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@keyframes pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .rc-step.now, .rc-prev-empty, .rc-skel i { animation: none; } }
+
+/* 투명 효과를 못 쓰는 경우: 불투명 면으로 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --glass: #ffffff; --glass-strong: #ffffff; --tile: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --glass: #181c17; --glass-strong: #181c17; --tile: #272d26; } }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root { --glass: #ffffff; --glass-strong: #ffffff; --tile: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --glass: #181c17; --glass-strong: #181c17; --tile: #272d26; } }
+  .backdrop, .toast, .top { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .stat, .ledger, #list, .card, .rc-sum, .tabs, .sheet, .seg, .rc-step, .btn.secondary { -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); }
+  .tabs, .sheet { -webkit-backdrop-filter: blur(26px) saturate(1.7); backdrop-filter: blur(26px) saturate(1.7); }
+}
+
+.masthead .stat .in { color: #146003; }
+@media (prefers-color-scheme: dark) { .masthead .stat .in { color: var(--in); } }

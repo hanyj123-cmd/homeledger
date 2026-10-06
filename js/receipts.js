@@ -20,6 +20,19 @@ function blobToBase64(blob) {
   });
 }
 
+// 사진 내용의 지문(SHA-256). 서버를 부르기 전에 "이미 저장한 사진인지" 바로 알 수 있습니다.
+export async function sha256OfBase64(b64) {
+  try {
+    const subtle = globalThis.crypto && globalThis.crypto.subtle;
+    if (!subtle) return '';
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const digest = new Uint8Array(await subtle.digest('SHA-256', bytes));
+    return Array.from(digest).map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) { return ''; }
+}
+
 async function drawToJpeg(source, w, h, maxDim, quality) {
   const scale = Math.min(1, maxDim / Math.max(w, h));
   const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
@@ -36,20 +49,24 @@ export async function prepareImage(file) {
   const type = String(file.type || '').toLowerCase();
   if (type === 'application/pdf') {
     if (file.size > 6 * 1024 * 1024) throw new Error('PDF 가 너무 큽니다 (6MB 이하).');
-    return { base64: await blobToBase64(file), mime: 'application/pdf', fileName: file.name || 'receipt.pdf', thumb: '' };
+    const base64 = await blobToBase64(file);
+    return { base64, mime: 'application/pdf', fileName: file.name || 'receipt.pdf', thumb: '', sha256: await sha256OfBase64(base64) };
   }
   try {
     const bmp = await createImageBitmap(file);
     const blob = await drawToJpeg(bmp, bmp.width, bmp.height, MAX_DIM, 0.82);
-    const thumbBlob = await drawToJpeg(bmp, bmp.width, bmp.height, 120, 0.6);
+    const thumbBlob = await drawToJpeg(bmp, bmp.width, bmp.height, 240, 0.6);
+    if (bmp.close) bmp.close();
+    const [base64, thumb] = await Promise.all([blobToBase64(blob), blobToBase64(thumbBlob)]);
     return {
-      base64: await blobToBase64(blob), mime: 'image/jpeg', fileName: (file.name || 'receipt').replace(/\.[^.]+$/, '') + '.jpg',
-      thumb: 'data:image/jpeg;base64,' + await blobToBase64(thumbBlob)
+      base64, mime: 'image/jpeg', fileName: (file.name || 'receipt').replace(/\.[^.]+$/, '') + '.jpg',
+      thumb: 'data:image/jpeg;base64,' + thumb, sha256: await sha256OfBase64(base64)
     };
   } catch (e) {
     // HEIC 등 브라우저가 못 여는 형식은 원본 그대로 (서버가 지원)
     if (file.size > 6 * 1024 * 1024) throw new Error('이 사진 형식은 크기를 줄일 수 없습니다. 사진 앱에서 JPEG 로 저장해 다시 올려 주세요.');
-    return { base64: await blobToBase64(file), mime: type || 'image/jpeg', fileName: file.name || 'receipt', thumb: '' };
+    const base64 = await blobToBase64(file);
+    return { base64, mime: type || 'image/jpeg', fileName: file.name || 'receipt', thumb: '', sha256: await sha256OfBase64(base64) };
   }
 }
 
@@ -63,14 +80,17 @@ export async function callApi(payload) {
   const token = getToken();
   if (!token) throw new Error('로그인이 필요합니다. 상단의 로그인 버튼을 누르세요.');
   let res;
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), 70000) : null;
   try {
     res = await fetch(CONFIG.RECEIPT_API_URL, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(Object.assign({ token }, payload))
+      body: JSON.stringify(Object.assign({ token }, payload)), signal: ctl ? ctl.signal : undefined
     });
   } catch (e) {
+    if (e && e.name === 'AbortError') throw new Error('영수증 서버 응답이 너무 늦습니다. 잠시 후 다시 시도하세요.');
     throw new Error('영수증 서버에 연결하지 못했습니다. 인터넷 연결을 확인하세요.');
-  }
+  } finally { if (timer) clearTimeout(timer); }
   let data;
   try { data = await res.json(); } catch (e) {
     throw new Error('영수증 서버의 응답을 읽지 못했습니다. (배포 주소와 "모든 사용자" 접근 설정을 확인하세요)');
@@ -81,8 +101,21 @@ export async function callApi(payload) {
 
 export function ping() { return callApi({ action: 'ping' }); }
 
+// 읽기와 드라이브 보관을 따로(동시에) 보내서, 보관 시간이 읽는 시간에 더해지지 않게 합니다.
 export function parseReceipt(img, categories) {
-  return callApi({ action: 'parseReceipt', image: img.base64, mime: img.mime, fileName: img.fileName, categories, save: true });
+  return callApi({ action: 'parseReceipt', image: img.base64, mime: img.mime, categories, save: false });
+}
+
+export function storeReceipt(img) {
+  return callApi({ action: 'saveReceipt', image: img.base64, mime: img.mime, fileName: img.fileName });
+}
+
+// 서버가 잠들어 있으면 첫 요청이 느립니다. 스캔 창을 여는 순간 미리 깨워 둡니다. (실패해도 무시)
+let lastWarm = 0;
+export function warmUp() {
+  if (!apiConfigured() || !getToken() || Date.now() - lastWarm < 240000) return Promise.resolve(false);
+  lastWarm = Date.now();
+  return ping().then(() => true, () => { lastWarm = 0; return false; });
 }
 
 // ───────── 항목 / 세금 배분 ─────────

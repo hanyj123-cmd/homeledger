@@ -50,39 +50,67 @@ export function openScan(api) {
         h('button', { type: 'button', class: 'btn secondary', onclick: close }, 'Close (닫기)'))));
   }
 
+  // 진행 화면: 사진 미리보기와 단계 표시 (기다리는 시간이 짧게 느껴지도록)
+  function busy(stage, preview) {
+    const steps = [['prep', 'Photo (사진 준비)'], ['read', 'Reading (영수증 읽기)'], ['check', 'Check (확인)']];
+    const at = stage === 'prep' ? 0 : 1;
+    show(shell('Reading… (읽는 중)',
+      h('div', { class: 'rc-busy', id: 'rc-busy' },
+        preview ? h('img', { class: 'rc-prev', src: preview, alt: '' }) : h('div', { class: 'rc-prev rc-prev-empty' }),
+        h('div', { class: 'rc-steps' }, steps.map((st, i) => h('div', { class: 'rc-step' + (i < at ? ' done' : i === at ? ' now' : '') }, (i < at ? '✓ ' : '') + st[1]))),
+        h('div', { class: 'rc-skel' }, h('i'), h('i'), h('i'), h('i')))));
+  }
+
   async function run(file) {
-    show(shell('Reading… (읽는 중)', h('div', { class: 'card center muted', id: 'rc-busy' }, 'Reading the receipt, about 10 seconds (영수증을 읽고 있습니다. 약 10초)')));
+    let preview = '';
+    try { preview = URL.createObjectURL(file); } catch (e) { /* 미리보기는 없어도 됨 */ }
+    busy('prep', preview);
+    let img;
+    try { img = await R.prepareImage(file); } catch (e) { failure(e.message || String(e), pick); return; }
+    img.preview = img.thumb || preview;
+    // 같은 사진인지 서버를 부르기 전에 확인 → 즉시 알려 주고, 무료 사용량도 아낍니다.
+    const dup = R.findDuplicate(api.state.data.receipts, api.state.data.txns, img.sha256);
+    if (dup) duplicate(dup, img); else go(img);
+  }
+
+  async function go(img) {
+    busy('read', img.preview);
+    // 드라이브 보관은 읽기와 동시에 보냅니다.
+    const stored = R.storeReceipt(img).catch((e) => ({ driveError: e.message || String(e) }));
     try {
-      const img = await R.prepareImage(file);
       const cats = api.state.data.accounts.filter((a) => L.isActive(a) && a.type === 'EXPENSE').map((a) => ({ id: String(a.account_id), name: a.name }));
       const res = await R.parseReceipt(img, cats);
       const parsed = res.parsed || {};
       const meta = {
-        drive: res.drive || null, driveError: res.driveError || '', sha256: res.sha256 || '', model: res.model || '', mime: img.mime,
+        drive: null, driveError: '', driveDone: false, sha256: img.sha256 || '', model: res.model || '', mime: img.mime,
         fileName: img.fileName, confidence: parsed.confidence, parsedJson: JSON.stringify(parsed)
       };
-      const dup = R.findDuplicate(api.state.data.receipts, api.state.data.txns, meta.sha256);
+      meta.stored = stored.then((r) => {
+        meta.drive = r.drive || null; meta.driveError = r.driveError || ''; meta.driveDone = true;
+        if (!meta.sha256 && r.sha256) meta.sha256 = r.sha256;
+        return meta;
+      });
       let fromId = '';
       try { fromId = localStorage.getItem('hl_last_from') || ''; } catch (e) { /* ignore */ }
       if (!api.state.d.accMap.has(String(fromId))) fromId = '';
-      const draft = R.draftFromParsed(parsed, img, meta, { accMap: api.state.d.accMap, rules: api.state.data.rules, taxCodes: api.state.data.taxCodes, fromId });
-      if (dup) duplicate(dup, draft); else review(draft);
+      review(R.draftFromParsed(parsed, img, meta, { accMap: api.state.d.accMap, rules: api.state.data.rules, taxCodes: api.state.data.taxCodes, fromId }));
     } catch (e) {
       failure(e.message || String(e), pick);
     }
   }
 
-  function duplicate(dup, draft) {
+  function duplicate(dup, img) {
     show(shell('Already saved? (이미 저장됨?)',
       h('div', { class: 'card warn-card', id: 'rc-dup' }, 'This same photo was saved on ' + dup.txn.date + ' as "' + (dup.txn.merchant || '') + '" (' + api.fmt(L.num(dup.txn.total_cad)) + '). 같은 사진이 이미 저장되어 있습니다.'),
       h('div', { class: 'btnrow' },
         h('button', { type: 'button', class: 'btn', id: 'rc-open-dup', onclick: () => { close(); openEdit(api, dup.txn.txn_id); } }, 'Open saved one (저장된 거래 열기)'),
-        h('button', { type: 'button', class: 'btn secondary', id: 'rc-anyway', onclick: () => review(draft) }, 'Save again anyway (그래도 새로 저장)'))));
+        h('button', { type: 'button', class: 'btn secondary', id: 'rc-anyway', onclick: () => go(img) }, 'Save again anyway (그래도 새로 저장)'))));
   }
 
   function review(draft) { openReview(api, draft, close, show, shell); }
 
   pick();
+  R.warmUp();
 }
 
 export function openEdit(api, txnId) {
@@ -235,12 +263,20 @@ function openReview(api, draft, close, show, shell) {
 
   async function onSave() {
     if (saving) return;
-    const res = R.makeReceiptRecords(draft, { accMap: d.accMap, taxCodes, rules: data.rules, existing: draft._existing || null, now: L.nowIso() });
-    if (res.error) { errEl.textContent = res.error; return; }
+    const pre = R.makeReceiptRecords(draft, { accMap: d.accMap, taxCodes, rules: data.rules, existing: draft._existing || null, now: L.nowIso() });
+    if (pre.error) { errEl.textContent = pre.error; return; }
     saving = true;
     const btn = $('rc-save');
     if (btn) btn.disabled = true;
     try {
+      // 사진 보관이 아직 끝나지 않았으면 잠깐(최대 20초) 기다렸다가 파일 정보를 함께 저장합니다.
+      if (draft.meta && draft.meta.stored && !draft.meta.driveDone) {
+        errEl.textContent = 'Finishing photo upload… (사진 보관 마무리 중)';
+        await Promise.race([draft.meta.stored, new Promise((r) => setTimeout(r, 20000))]);
+        errEl.textContent = '';
+      }
+      const res = R.makeReceiptRecords(draft, { accMap: d.accMap, taxCodes, rules: data.rules, existing: draft._existing || null, now: L.nowIso() });
+      if (res.error) { saving = false; if (btn) btn.disabled = false; errEl.textContent = res.error; return; }
       const puts = { Transactions: [res.txn], Postings: res.postings, LineItems: res.lineItems };
       const order = ['Receipts', 'LineItems', 'Postings', 'Transactions'];
       if (res.receipt) puts.Receipts = [res.receipt];
