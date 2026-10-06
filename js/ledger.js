@@ -211,7 +211,7 @@ export function newForm(defaults) {
   return Object.assign({
     kind: 'EXPENSE', date: todayStr(), amountText: '', currency: 'CAD', cadText: '', rateText: '',
     fromId: '', toId: '', categoryId: '', accountId: '', merchant: '', memo: '', owner: 'Joint',
-    tripTag: '', passthrough: false, categoryTouched: false, ownerTouched: false
+    tripTag: '', passthrough: false, refund: false, categoryTouched: false, ownerTouched: false
   }, defaults || {});
 }
 
@@ -232,7 +232,7 @@ export function formFromTxn(txn, postings, accMap) {
     f.passthrough = true;
     if (f.kind === 'EXPENSE') f.fromId = d.accountId; else f.toId = d.accountId;
   } else if (d.kind === 'EXPENSE') {
-    f.kind = 'EXPENSE'; f.fromId = d.accountId; f.categoryId = d.categoryId;
+    f.kind = 'EXPENSE'; f.fromId = d.accountId; f.categoryId = d.categoryId; f.refund = d.flow === 'in';
   } else if (d.kind === 'INCOME') {
     f.kind = 'INCOME'; f.toId = d.accountId; f.categoryId = d.categoryId;
   } else if (d.kind === 'OPENING') {
@@ -326,7 +326,7 @@ export function makeRecords(form, ctx) {
     if (!isMoneyAccount(A(form.fromId))) return { error: '결제 계좌를 선택하세요.' };
     const c = A(categoryId);
     if (!c || !(c.type === 'EXPENSE' || String(c.account_id) === CONFIG.CLEARING_ID)) return { error: '카테고리를 선택하세요.' };
-    lines = [[categoryId, 1], [form.fromId, -1]];
+    lines = form.refund ? [[form.fromId, 1], [categoryId, -1]] : [[categoryId, 1], [form.fromId, -1]];
   } else if (kind === 'INCOME') {
     if (!isMoneyAccount(A(form.toId))) return { error: '입금 계좌를 선택하세요.' };
     const c = A(categoryId);

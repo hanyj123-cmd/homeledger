@@ -3,6 +3,7 @@ import { CONFIG } from './config.js';
 import * as L from './ledger.js';
 import * as sync from './sync.js';
 import * as auth from './auth.js';
+import * as importui from './importui.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, ccy) => L.fmtMoney(n, ccy);
@@ -74,7 +75,11 @@ async function reload() {
 
 export async function init() {
   document.querySelectorAll('.tabs button').forEach((b) => {
-    b.addEventListener('click', () => { state.tab = b.getAttribute('data-tab'); renderAll(); });
+    b.addEventListener('click', () => {
+      state.tab = b.getAttribute('data-tab');
+      if (state.tab === 'import') importui.resetIfDone();
+      renderAll();
+    });
   });
   $('fab').addEventListener('click', () => openForm(null));
   $('chip').addEventListener('click', onChip);
@@ -129,9 +134,11 @@ function renderAll() {
 
 export function renderBody(force) {
   if (!state.d) return;
+  if (!force && state.tab === 'import' && importui._state().parsed && !importui._state().done) return;
   if (!force && state.tab === 'txns' && $('q') && document.activeElement === $('q')) { renderList(); return; }
   if (state.tab === 'txns') renderTxns();
   else if (state.tab === 'accounts') renderAccounts();
+  else if (state.tab === 'import') renderImport();
   else renderSettings();
 }
 
@@ -204,6 +211,20 @@ function row(it) {
     h('div', { class: 'row-right' },
       h('div', { class: 'row-amt ' + dsc.flow }, arrow + ' ' + fmt(L.num(t.total_cad))),
       foreign ? h('div', { class: 'row-fx' }, prov + fmt(L.num(t.total_orig), t.currency)) : null));
+}
+
+// ───────── 명세서 가져오기 ─────────
+
+function renderImport() {
+  const v = $('view');
+  v.replaceChildren();
+  if (!state.data.accounts.length) { v.append(emptyState()); return; }
+  v.append(importui.render({
+    h, toast, state, fmt,
+    accounts: state.data.accounts, accMap: state.d.accMap, data: state.data, items: state.d.items,
+    reload: async () => { await reload(); },
+    goToTxns: (month) => { if (month) state.month = month; state.query = ''; state.tab = 'txns'; renderAll(); }
+  }));
 }
 
 // ───────── 계좌 ─────────
@@ -360,7 +381,7 @@ export function openForm(txnId) {
     rows.push(h('div', { class: 'seg', role: 'tablist' }, KIND_LABELS.map((k) => h('button', {
       type: 'button', class: f.kind === k[0] ? 'on' : '',
       onclick: () => {
-        f.kind = k[0]; f.categoryId = ''; f.categoryTouched = false;
+        f.kind = k[0]; f.categoryId = ''; f.categoryTouched = false; f.refund = false;
         if (k[0] !== 'EXPENSE' && k[0] !== 'INCOME') f.passthrough = false;
         draw();
       }
@@ -426,6 +447,11 @@ export function openForm(txnId) {
       rows.push(h('label', { class: 'check' },
         h('input', { type: 'checkbox', id: 'f-pass', checked: f.passthrough, onchange: (e) => { f.passthrough = e.target.checked; draw(); } }),
         h('span', null, 'Passthrough (전달 자금 · 손익에서 제외)')));
+      if (f.kind === 'EXPENSE') {
+        rows.push(h('label', { class: 'check' },
+          h('input', { type: 'checkbox', id: 'f-refund', checked: f.refund, onchange: (e) => { f.refund = e.target.checked; } }),
+          h('span', null, 'Refund — money came back (환불: 돈이 돌아옴)')));
+      }
       if (!f.passthrough) {
         rows.push(field(f.kind === 'EXPENSE' ? 'Category (카테고리)' : 'Income type (수입 항목)', h('select', {
           id: 'f-cat', onchange: (e) => { f.categoryId = e.target.value; f.categoryTouched = true; }

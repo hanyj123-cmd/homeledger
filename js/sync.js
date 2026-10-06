@@ -28,7 +28,7 @@ function notifyData() { dataCbs.forEach((cb) => cb()); }
 // 화면에 보여줄 "대기 N건" = 아직 시트에 못 올린 거래 수
 export async function refreshPending() {
   const ops = await S.getOutbox();
-  const txnOps = ops.filter((o) => o.sheet === 'Transactions').length;
+  const txnOps = ops.filter((o) => o.sheet === 'Transactions').reduce((n, o) => n + o.rows.length, 0);
   const n = txnOps || (ops.length ? 1 : 0);
   setStatus({ pending: n });
   return n;
@@ -40,11 +40,11 @@ export async function refreshStatus() {
 }
 
 export async function loadAll() {
-  const [accounts, taxCodes, settings, rules, fxRates, txns, postings] = await Promise.all(
+  const [accounts, taxCodes, settings, rules, fxRates, txns, postings, profiles, stmtLines] = await Promise.all(
     CONFIG.SYNC_SHEETS.map((s) => S.getAll(s))
   );
   accounts.sort((a, b) => num(a.sort_order) - num(b.sort_order));
-  return { accounts, taxCodes, settings, rules, fxRates, txns, postings };
+  return { accounts, taxCodes, settings, rules, fxRates, txns, postings, profiles, stmtLines };
 }
 
 async function pendingIds(sheet) {
@@ -132,6 +132,22 @@ export async function saveRecords(rec, opts) {
     ops.push({ sheet: 'Rules', rows: [rec.rule] });
   }
   await S.commit(puts, ops);
+  await refreshPending();
+  notifyData();
+  sync();
+}
+
+// 여러 시트를 한 번에 저장 (명세서 가져오기용). order 순서대로 시트에 올립니다.
+export async function saveBatch(puts, order) {
+  const ops = [];
+  const real = {};
+  order.forEach((sheet) => {
+    const rows = puts[sheet];
+    if (!rows || !rows.length) return;
+    real[sheet] = rows;
+    ops.push({ sheet, rows });
+  });
+  await S.commit(real, ops);
   await refreshPending();
   notifyData();
   sync();

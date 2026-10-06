@@ -8,9 +8,9 @@ export const CONFIG = {
   OWNERS: ['Patrick', 'Ms Kim', 'Joint'],
   CLEARING_ID: '2900',   // Passthrough Clearing (전달 자금)
   OPENING_ID: '3010',    // Opening Balance Equity (기초 잔액 자본)
-  SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings'],
+  SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines'],
   AUTO_SYNC_MS: 60000,
-  APP_VERSION: '0.3.0'
+  APP_VERSION: '0.4.0'
 };
 
 // 각 시트의 첫 번째 열 = 행의 고유 키
@@ -21,7 +21,9 @@ export const KEYS = {
   Rules: 'rule_id',
   FxRates: 'fx_id',
   Transactions: 'txn_id',
-  Postings: 'posting_id'
+  Postings: 'posting_id',
+  ImportProfiles: 'profile_id',
+  StatementLines: 'stmt_line_id'
 };
 
 const TAIL = ['updated_at', 'deleted'];
@@ -41,5 +43,10 @@ export const HEADERS = {
     'source', 'status', 'owner', 'trip_tag', 'is_passthrough',
     'receipt_id', 'statement_line_id', 'created_at'].concat(TAIL),
   Postings: ['posting_id', 'txn_id', 'line_id', 'account_id', 'amount_cad', 'amount_orig',
-    'currency', 'fx_rate', 'memo'].concat(TAIL)
+    'currency', 'fx_rate', 'memo'].concat(TAIL),
+  ImportProfiles: ['profile_id', 'account_id', 'has_header', 'date_col', 'date_format', 'year_source',
+    'desc_cols', 'debit_col', 'credit_col', 'amount_col', 'sign_flip', 'skip_rows_regex'].concat(TAIL),
+  StatementLines: ['stmt_line_id', 'import_id', 'account_id', 'date', 'description_raw', 'merchant_norm',
+    'amount', 'currency', 'foreign_amount_hint', 'foreign_currency_hint', 'dedupe_key',
+    'match_status', 'matched_txn_id', 'match_score', 'rule_id'].concat(TAIL)
 };

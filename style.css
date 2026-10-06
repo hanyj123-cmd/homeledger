@@ -168,3 +168,16 @@ input[type="search"] { margin-bottom: 10px; }
   position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 60;
   max-width: 90vw; padding: 10px 16px; border-radius: 999px; background: var(--text); color: var(--bg); font-size: 0.82rem; box-shadow: var(--shadow);
 }
+
+/* 명세서 가져오기 */
+input[type="file"] { width: 100%; padding: 8px 0; font-size: 16px; }
+.imp-line { display: grid; gap: 4px; padding: 8px 12px; margin-bottom: 6px; }
+.imp-line.skipped { opacity: 0.5; }
+.imp-line.review { border-color: var(--warn); }
+.imp-line .row-amt { font-size: 0.95rem; }
+.imp-line select { min-height: 42px; font-size: 14px; }
+.imp-targetwrap { min-width: 0; }
+.rawtable { overflow-x: auto; font-family: ui-monospace, Menlo, monospace; font-size: 0.62rem; color: var(--muted); }
+.rawrow { white-space: pre; margin: 2px 0; }
+details.card > summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; margin-bottom: 8px; }
+.tabs button .ko { font-size: 0.62rem; }
