@@ -746,7 +746,7 @@ export function render(api) {
   });
 
   // ═════ 배치 ═════
-  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secModel, secReceipts, secRules, secXfer, categoriesCard(api, icon), secInstall, secData, secMigrate);
+  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secModel, secReceipts, secXfer, categoriesCard(api, icon), secInstall, secData, secMigrate, secRules);   // 규칙 카드는 길어서 맨 아래 (접어 둠)
   root.append(h('div', { class: 'page set-page', }, grid,
     h('div', { class: 'set-foot' },
       h('div', { class: 'muted small', id: 'set-foot-ver' }, 'Home Ledger v' + CONFIG.APP_VERSION),

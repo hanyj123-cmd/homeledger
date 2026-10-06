@@ -2,6 +2,7 @@
 // 지출/수입 카테고리뿐 아니라 은행 계좌 · 카드 · 대출도 추가할 수 있습니다. 저장은 Accounts 시트에 (로컬 우선).
 import * as L from './ledger.js';
 import { CONFIG } from './config.js';
+import { cleanLast4 } from './receipts.js';
 import { icon } from './icons.js';
 
 export const KINDS = [
@@ -52,6 +53,7 @@ export function makeAccountRow(accounts, f, existing, now) {
       subtype: (type === 'ASSET' || type === 'LIABILITY') ? (f.subtype || existing.subtype || '') : existing.subtype || '',
       owner: (type === 'ASSET' || type === 'LIABILITY') ? (f.owner || existing.owner || 'Joint') : existing.owner || '',
       institution: f.institution !== undefined ? String(f.institution).trim() : existing.institution || '',
+      last4: f.last4 !== undefined && (type === 'ASSET' || type === 'LIABILITY') ? cleanLast4(f.last4) : existing.last4 || '',
       is_active: f.active === false ? false : true, updated_at: now }) };
   }
   const id = nextId(accounts, type, group);
@@ -59,7 +61,7 @@ export function makeAccountRow(accounts, f, existing, now) {
     account_id: id, name: name || ko, name_ko: ko || name, type,
     subtype: (type === 'ASSET' || type === 'LIABILITY') ? (f.subtype || (type === 'ASSET' ? 'CHEQUING' : 'CREDIT_CARD')) : '',
     parent_id: '', owner: (type === 'ASSET' || type === 'LIABILITY') ? (f.owner || 'Joint') : '',
-    institution: String(f.institution || '').trim(), currency: 'CAD', last4: '', report_group: group,
+    institution: String(f.institution || '').trim(), currency: 'CAD', last4: (type === 'ASSET' || type === 'LIABILITY') ? cleanLast4(f.last4) : '', report_group: group,
     sort_order: nextSort(accounts, type, group), is_active: true, updated_at: now, deleted: false
   } };
 }
@@ -277,6 +279,7 @@ export function openCategoryForm(api, opts) {
     const nameIn = h('input', { id: 'cf-name', type: 'text', autocomplete: 'off', maxlength: '60', value: existing ? existing.name || '' : '', placeholder: 'e.g. Pet care' });
     const koIn = h('input', { id: 'cf-ko', type: 'text', autocomplete: 'off', maxlength: '60', value: existing ? existing.name_ko || '' : '', placeholder: '예: 반려동물' });
     const instIn = h('input', { id: 'cf-inst', type: 'text', autocomplete: 'off', maxlength: '40', value: existing ? existing.institution || '' : '', placeholder: 'TD, RBC …' });
+    const l4In = h('input', { id: 'cf-last4', type: 'text', inputmode: 'numeric', autocomplete: 'off', maxlength: '40', value: existing ? existing.last4 || '' : '', placeholder: '1234  (' + '여러 장이면 1234, 5678)' });
     const seg = (id, items, cur, on) => h('div', { class: 'segtd cf-seg', id, role: 'radiogroup' }, items.map(([v, lab]) => h('button', {
       type: 'button', class: v === cur ? 'on' : '', role: 'radio', 'aria-checked': String(v === cur), 'data-v': v, onclick: () => { on(v); draw(); }
     }, lab)));
@@ -293,6 +296,8 @@ export function openCategoryForm(api, opts) {
         h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Name in Korean (한국어 이름)'), koIn),
         (t === 'ASSET' || t === 'LIABILITY') ? [
           h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Bank (금융기관)'), instIn),
+          h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Card / account last 4 digits (카드 · 계좌 뒷 4자리)'), l4In,
+            h('span', { class: 'hint' }, 'Used to pick this account when a receipt shows the card number (영수증에 카드 번호가 나오면 이 계좌를 자동 선택). Several cards: 1234, 5678 (여러 장이면 쉼표로). Last 4 digits only (뒷 4자리만).')),
           h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'Owner (소유자)'),
             seg('cf-owner', ['Patrick', 'Ms Kim', 'JY Han', 'Joint'].map((o) => [o, L.ownerLabel(o)]), st.owner, (v) => { st.owner = v; }))
         ] : null
@@ -301,7 +306,7 @@ export function openCategoryForm(api, opts) {
     draw();
     const save = async (active) => {
       err.textContent = '';
-      const res = makeAccountRow(api.data.accounts, { type: st.type, group: st.group, subtype: st.subtype, owner: st.owner, name: nameIn.value, name_ko: koIn.value, institution: instIn.value, active }, existing, L.nowIso());
+      const res = makeAccountRow(api.data.accounts, { type: st.type, group: st.group, subtype: st.subtype, owner: st.owner, name: nameIn.value, name_ko: koIn.value, institution: instIn.value, last4: l4In.value, active }, existing, L.nowIso());
       if (res.error) { err.textContent = res.error; return; }
       try {
         await api.saveBatch({ Accounts: [res.row] }, ['Accounts']);
@@ -312,7 +317,7 @@ export function openCategoryForm(api, opts) {
     const inUse = existing && (api.data.postings || []).some((p) => String(p.account_id) === String(existing.account_id) && !L.truthy(p.deleted));
     ov.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => { if (e.target === e.currentTarget) close(null); } },
       h('div', { class: 'sheet cf-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'cf-title' },
-        h('div', { class: 'sheet-head' }, h('h2', { id: 'cf-title' }, existing ? 'Edit category (카테고리 수정)' : 'Add category (카테고리 추가)'),
+        h('div', { class: 'sheet-head' }, h('h2', { id: 'cf-title' }, (st.type === 'ASSET' || st.type === 'LIABILITY') ? (existing ? 'Edit account (계좌 · 카드 수정)' : 'Add account (계좌 · 카드 추가)') : (existing ? 'Edit category (카테고리 수정)' : 'Add category (카테고리 추가)')),
           h('button', { type: 'button', class: 'icon', 'aria-label': 'Close (닫기)', onclick: () => close(null) }, '✕')),
         body, err,
         h('div', { class: 'btnrow cf-actions' },
@@ -354,6 +359,7 @@ export function categoriesCard(api, icon) {
           h('ul', { class: 'cf-list' }, rows.map((a) => h('li', { class: 'cf-item' + (L.isActive(a) ? '' : ' off') },
             h('button', { type: 'button', class: 'cf-row', 'data-acc': a.account_id, onclick: async () => { const r = await openCategoryForm(api, { account: a }); if (r) draw(); } },
               h('span', { class: 'cf-n' }, disp(a), sub(a) && sub(a) !== disp(a) ? h('small', null, sub(a)) : null),
+              a.last4 && (a.type === 'ASSET' || a.type === 'LIABILITY') ? h('span', { class: 'cf-l4' }, '····' + String(a.last4).replace(/\s*,\s*/g, ' ····')) : null,
               L.isActive(a) ? null : h('span', { class: 'set-pill off' }, 'Hidden (숨김)'),
               h('span', { class: 'cf-go', 'aria-hidden': 'true' }, '›')),
             PROTECTED_IDS.indexOf(String(a.account_id)) >= 0 ? null

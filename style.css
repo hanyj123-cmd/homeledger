@@ -2263,3 +2263,42 @@ button.txf-receipt.add { background: var(--surface); border-style: dashed; }
 .bk-xrow select { width: 100%; min-height: 48px; }
 .dp-xpick { display: grid; gap: 8px; padding: 4px 0 8px; }
 .dp-xpick .bk-cat { min-height: 48px; text-align: left; }
+
+/* v0.16 — 폰(특히 아이폰 Safari)에서 영수증 입력칸이 밖으로 삐져나가지 않게:
+   격자 칸이 안의 입력칸 고유 너비 때문에 늘어나지 못하게 하고(minmax(0,1fr)), 날짜·선택칸은 칸 너비에 맞춥니다 */
+input[type="date"], input[type="text"], input[type="number"], select { min-width: 0; max-width: 100%; }
+input[type="date"] { display: block; -webkit-appearance: none; appearance: none; }
+input[type="date"]::-webkit-date-and-time-value { text-align: left; min-height: 1.3em; }
+.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.two > * { min-width: 0; }
+.rc-two { align-items: end; }
+.rc-two > .field { display: flex; flex-direction: column; justify-content: flex-end; }
+.rc-item-top { grid-template-columns: minmax(0, 1fr) 96px 40px; }
+.rc-item-bot { grid-template-columns: minmax(0, 1fr); }
+.rc-item-bot:has(.rc-tax) { grid-template-columns: minmax(0, 1fr) 112px; }
+.rc-item select, .rc-item input[type="text"] { text-overflow: ellipsis; }
+.rc-item, .rc-sum, .rc-warn { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.rc-thumb-btn { margin-bottom: 12px; }
+@media (max-width: 380px) {
+  .rc-item-top { grid-template-columns: minmax(0, 1fr) 84px 36px; }
+  .rc-item-bot:has(.rc-tax) { grid-template-columns: minmax(0, 1fr) 96px; }
+}
+
+/* v0.16 — 영수증 결제수단 추측 · 계좌 뒷4자리 */
+.rc-pay { margin-top: 6px; }
+.rc-pay .hint { margin: 4px 0 6px; }
+.rc-rem4 { align-items: flex-start; margin: 4px 0 8px; font-size: 0.86rem; }
+.rc-rem4 input { margin-top: 3px; }
+.cf-l4 { margin-left: auto; margin-right: 8px; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* v0.16 — 설정의 Auto-categorize 카드: 접기/펼치기 (맨 아래로 이동) */
+.set-fold { width: 100%; min-height: 52px; margin: 0; padding: 4px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.set-fold h2 { flex: 1 1 auto; min-width: 0; }
+.set-fold .fold-count { flex: none; font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.set-fold .fold-chev { flex: none; display: inline-flex; color: var(--muted); transition: transform 0.18s; }
+.set-fold.open .fold-chev { transform: rotate(180deg); }
+.set-fold:focus-visible { outline: 3px solid var(--green); outline-offset: 2px; border-radius: 10px; }
+.rules-body { margin-top: 8px; }
+.rules-body[hidden] { display: none; }
+@media (max-width: 560px) { .set-fold .fold-count { display: none; } }
+@media (prefers-reduced-motion: reduce) { .set-fold .fold-chev { transition: none; } }

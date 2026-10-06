@@ -149,6 +149,65 @@ export function newItem(over) {
   return Object.assign({ name: '', name_raw: '', amountText: '', is_discount: false, tax_code: '', category_id: '', qty: null, unit_price: null }, over || {});
 }
 
+// ───────── 결제수단 추측 (영수증에 찍힌 카드 뒷4자리 · 카드 종류 → 내 계좌) ─────────
+
+/** 계좌의 "뒷 4자리" 칸 → 4자리 목록. "1234, 5678" · "····1234" 처럼 쓸 수 있고, 카드번호 전체를 넣어도 마지막 4자리만 남깁니다 */
+export function last4List(v) {
+  const t = String(v === undefined || v === null ? '' : v);
+  const out = [];
+  const add = (x) => { if (out.indexOf(x) < 0) out.push(x); };
+  if (!/[,;/·•]/.test(t) && t.replace(/[\s-]/g, '').replace(/\D/g, '').length >= 13 && /^[\d\s*xX•·-]+$/.test(t)) {
+    add(t.replace(/\D/g, '').slice(-4));   // 카드번호 전체를 붙여 넣은 경우
+    return out;
+  }
+  t.split(/\D+/).forEach((run) => { if (run.length >= 4) add(run.slice(-4)); });
+  return out;
+}
+export const cleanLast4 = (v) => last4List(v).join(', ');
+
+const GENERIC_WORDS = new Set(['card', 'credit', 'debit', 'visa', 'mastercard', 'master', 'mc', 'amex', 'american', 'express', 'discover', 'interac', 'the', 'and', 'bank', 'of', 'canada', 'canadian', 'cash', 'gift']);
+const NETWORKS = [['visa', /visa/], ['mastercard', /master\s*card|\bmc\b|mastercard/], ['amex', /amex|american\s*express/]];
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9가-힣 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+/**
+ * 영수증의 카드 정보로 "결제 계좌"를 추측합니다.
+ * parsed = { card_last4, card_brand, payment_method }, accounts = Accounts 행들(원본)
+ * → { id, how: 'last4'|'brand'|'cash'|'only' } 또는 null.  last4 는 확실, 나머지는 "추측"이라 화면에서 확인하라고 알려 줍니다.
+ */
+export function guessPayAccount(parsed, accounts) {
+  const p = parsed || {};
+  const money = (accounts || []).filter((a) => L.isActive(a) && L.isMoneyAccount(a));
+  const l4 = /^\d{4}$/.test(String(p.card_last4 || '')) ? String(p.card_last4) : '';
+  if (l4) {
+    const hit = money.filter((a) => last4List(a.last4).indexOf(l4) >= 0);
+    if (hit.length) return { id: String(hit[0].account_id), how: 'last4', ambiguous: hit.length > 1 };
+  }
+  const text = norm((p.card_brand || '') + ' ' + (p.payment_method === 'CASH' ? 'cash' : ''));
+  const method = String(p.payment_method || '').toUpperCase();
+  const net = NETWORKS.find((n) => n[1].test(text));
+  const isCash = method === 'CASH' || /\bcash\b|현금/.test(text);
+  const isDebit = method === 'DEBIT' || /interac|debit/.test(text);
+  const isCredit = method === 'CREDIT' || !!net || /credit/.test(text);
+  const hay = (a) => norm([a.institution, a.name, a.name_ko].join(' '));
+  let pool = [];
+  let how = 'brand';
+  if (isCash) { pool = money.filter((a) => a.subtype === 'CASH' || /\bcash\b|현금/.test(hay(a))); how = 'cash'; }
+  else if (isDebit && !isCredit) pool = money.filter((a) => a.type === 'ASSET' && (a.subtype === 'CHEQUING' || a.subtype === 'SAVINGS' || !a.subtype));
+  else if (isCredit) pool = money.filter((a) => a.type === 'LIABILITY' && (a.subtype === 'CREDIT_CARD' || !a.subtype));
+  if (!pool.length) return null;
+  const words = text.split(' ').filter((w) => w.length >= 2 && !GENERIC_WORDS.has(w));
+  const scored = pool.map((a) => {
+    const h = hay(a);
+    let sc = 0;
+    words.forEach((w) => { if (h.indexOf(w) >= 0) sc += 2; });
+    if (net && net[1].test(h)) sc += 1;
+    return { a, sc };
+  }).sort((x, y) => y.sc - x.sc);
+  if (scored[0].sc > 0 && (scored.length === 1 || scored[0].sc > scored[1].sc)) return { id: String(scored[0].a.account_id), how };
+  if (pool.length === 1 && !words.length) return { id: String(pool[0].account_id), how: how === 'cash' ? 'cash' : 'only' };
+  return null;
+}
+
 // 서버가 돌려준 결과 → 편집용 초안
 // ctx = { accMap, rules, taxCodes, fromId, owner }
 export function draftFromParsed(parsed, img, meta, ctx) {
@@ -156,6 +215,7 @@ export function draftFromParsed(parsed, img, meta, ctx) {
   const rule = L.suggestRule(ctx.rules || [], parsed.merchant);
   const ruleCat = rule && ctx.accMap.get(String(rule.account_id)) && ctx.accMap.get(String(rule.account_id)).type === 'EXPENSE' ? String(rule.account_id) : '';
   const dec = L.decimals(ccy);
+  const payGuess = ctx.accounts ? guessPayAccount(parsed, ctx.accounts) : null;
   const items = (parsed.items || []).map((it) => newItem({
     name: it.name, name_raw: it.name_raw || '', amountText: String(L.round(it.amount, dec)), is_discount: !!it.is_discount,
     tax_code: ccy === 'CAD' ? (it.tax_code || '') : '', category_id: it.category_id || ruleCat || '', qty: it.qty, unit_price: it.unit_price
@@ -164,7 +224,9 @@ export function draftFromParsed(parsed, img, meta, ctx) {
     merchant: parsed.merchant || '', date: parsed.date || L.todayStr(), currency: ccy,
     totalText: parsed.total ? String(L.round(parsed.total, dec)) : '', taxText: parsed.tax_total === null || parsed.tax_total === undefined ? '' : String(L.round(parsed.tax_total, dec)),
     tipText: parsed.tip ? String(L.round(parsed.tip, dec)) : '', tipCategory: '', cadText: '', rateText: '',
-    fromId: ctx.fromId || '', owner: ctx.owner || 'Joint', items, warnings: parsed.warnings || [], notes: parsed.notes || '',
+    fromId: (payGuess && payGuess.id) || ctx.fromId || '', owner: ctx.owner || 'Joint', items, warnings: parsed.warnings || [], notes: parsed.notes || '',
+    pay: /^\d{4}$/.test(String(parsed.card_last4 || '')) || parsed.card_brand || parsed.payment_method
+      ? { last4: /^\d{4}$/.test(String(parsed.card_last4 || '')) ? String(parsed.card_last4) : '', brand: parsed.card_brand || '', method: parsed.payment_method || '', how: payGuess ? payGuess.how : '', guessId: payGuess ? payGuess.id : '', ambiguous: !!(payGuess && payGuess.ambiguous) } : null,
     thumb: (img && img.thumb) || '', meta: meta || null, existing: null
   };
 }

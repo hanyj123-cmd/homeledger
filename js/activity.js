@@ -154,7 +154,7 @@ export function render(api) {
   }
   const pick = h('label', { class: 'acct-pick' },
     h('span', { class: 'nm' }, acct ? acct.name : 'All accounts (전체 계좌)'),
-    acct && acct.last4 ? h('span', { class: 'no' }, '····' + acct.last4) : null,
+    acct && acct.last4 ? h('span', { class: 'no' }, '····' + String(acct.last4).replace(/\s*,\s*/g, ' ····')) : null,
     h('span', { class: 'chev' }, icon('down', 18)),
     h('select', {
       id: 'acct-filter', 'aria-label': 'Account (계좌)',

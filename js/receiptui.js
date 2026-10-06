@@ -98,7 +98,7 @@ export function openScan(api) {
       let fromId = '';
       try { fromId = localStorage.getItem('hl_last_from') || ''; } catch (e) { /* ignore */ }
       if (!api.state.d.accMap.has(String(fromId))) fromId = '';
-      review(R.draftFromParsed(parsed, img, meta, { accMap: api.state.d.accMap, rules: api.state.data.rules, taxCodes: api.state.data.taxCodes, fromId }));
+      review(R.draftFromParsed(parsed, img, meta, { accMap: api.state.d.accMap, rules: api.state.data.rules, taxCodes: api.state.data.taxCodes, fromId, accounts: api.state.data.accounts }));
     } catch (e) {
       failure(e.message || String(e), pick);
     }
@@ -235,15 +235,39 @@ function openReview(api, draft, close, show, shell) {
     if (draft.notes) rows.push(h('div', { class: 'note' }, draft.notes));
 
     rows.push(field('Merchant (가맹점)', h('input', { type: 'text', id: 'rc-merchant', value: draft.merchant, autocomplete: 'off', oninput: (e) => { draft.merchant = e.target.value; } })));
-    rows.push(h('div', { class: 'two' },
+    rows.push(h('div', { class: 'two rc-two' },
       field('Date (날짜)', h('input', { type: 'date', id: 'rc-date', value: draft.date, onchange: (e) => { draft.date = e.target.value; } })),
       field('Currency (통화)', h('select', { id: 'rc-ccy', onchange: (e) => { draft.currency = e.target.value; if (draft.currency !== 'CAD') draft.items.forEach((i) => { i.tax_code = ''; }); draw(); } },
         CONFIG.CURRENCIES.map((c) => h('option', { value: c, selected: c === ccy }, c))))));
+    const payBox = h('div', { class: 'rc-pay', id: 'rc-pay' });
+    // 영수증에 찍힌 카드 뒷4자리 · 카드 종류로 추측한 결제 계좌 안내 + (처음 보는 번호면) 이 계좌에 기억시키기
+    const drawPay = () => {
+      const pay = draft.pay;
+      const kids = [];
+      if (pay && !editing) {
+        const tag = (pay.last4 ? '····' + pay.last4 : '') + (pay.brand ? (pay.last4 ? ' · ' : '') + pay.brand : '');
+        const acct = draft.fromId ? accounts.find((a) => String(a.account_id) === String(draft.fromId)) : null;
+        const known = acct && pay.last4 && R.last4List(acct.last4).indexOf(pay.last4) >= 0;
+        if (pay.how === 'last4' && String(draft.fromId) === String(pay.guessId)) kids.push(h('div', { class: 'hint ok-hint', id: 'rc-pay-hint' }, '✓ Picked by the card on the receipt (영수증의 카드 ' + tag + ' 로 자동 선택)' + (pay.ambiguous ? ' — more than one account has this number (같은 번호 계좌가 여러 개)' : '')));
+        else if (pay.guessId && String(draft.fromId) === String(pay.guessId)) kids.push(h('div', { class: 'hint', id: 'rc-pay-hint' }, 'Guessed from the receipt (' + (tag || 'card') + ') — please check (영수증으로 추측했어요: ' + (tag || '카드') + ' — 맞는지 확인하세요)'));
+        else if (tag) kids.push(h('div', { class: 'hint', id: 'rc-pay-hint' }, 'Receipt shows ' + tag + (pay.last4 && !known ? ' — not saved on any account yet (아직 어느 계좌에도 없는 번호예요)' : '') + ' (영수증 결제: ' + tag + ')'));
+        if (pay.last4 && acct && !known && L.isMoneyAccount(acct)) {
+          // 영수증으로 추측했거나 내가 직접 고른 계좌일 때만 기본으로 체크 (지난번에 쓴 계좌가 자동으로 들어간 경우엔 체크 안 함)
+          if (draft.remember4 === undefined) draft.remember4 = !!(pay.guessId && String(draft.fromId) === String(pay.guessId));
+          kids.push(h('label', { class: 'check rc-rem4', id: 'rc-rem4-row' },
+            h('input', { type: 'checkbox', id: 'rc-rem4', checked: !!draft.remember4, onchange: (e) => { draft.remember4 = e.target.checked; } }),
+            h('span', null, 'Remember ····' + pay.last4 + ' for ' + (acct.name_ko || acct.name) + ' — picks it automatically next time (이 번호를 이 계좌에 기억 — 다음부터 자동 선택)')));
+        }
+      }
+      payBox.replaceChildren(...kids);
+    };
     rows.push(field('Paid from (결제 계좌)', h('select', { id: 'rc-from', onchange: (e) => {
       draft.fromId = e.target.value;
-      const a = d.accMap.get(String(draft.fromId));
+      draft.remember4 = true;   // 직접 고른 계좌
+      drawPay();
       // 소유자는 기본 Joint (계좌 소유자로 바꾸지 않음)
-    } }, moneyOptions(draft.fromId))));
+    } }, moneyOptions(draft.fromId)), payBox));
+    drawPay();
     rows.push(field('Owner (소유자)', h('select', { id: 'rc-owner', onchange: (e) => { draft.owner = e.target.value; } },
       CONFIG.OWNERS.map((o) => h('option', { value: o, selected: o === draft.owner }, L.ownerLabel(o))))));
 
@@ -256,12 +280,12 @@ function openReview(api, draft, close, show, shell) {
     } }, '+ Add item (항목 추가)'));
 
     rows.push(h('h2', { class: 'sect' }, 'Totals (합계)'));
-    rows.push(h('div', { class: 'two' },
+    rows.push(h('div', { class: 'two rc-two' },
       field('Tax on receipt (영수증 세금)', h('input', { type: 'text', id: 'rc-tax', inputmode: 'decimal', value: draft.taxText, placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.taxText = e.target.value; updateSum(); } })),
       field('Tip (팁)', h('input', { type: 'text', id: 'rc-tip', inputmode: 'decimal', value: draft.tipText, placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.tipText = e.target.value; updateSum(); } }))));
     rows.push(field('Receipt total (영수증 총액)', h('input', { type: 'text', id: 'rc-total', inputmode: 'decimal', value: draft.totalText, placeholder: '0.00', autocomplete: 'off', oninput: (e) => { draft.totalText = e.target.value; updateSum(); } })));
     if (ccy !== 'CAD') {
-      rows.push(h('div', { class: 'two' },
+      rows.push(h('div', { class: 'two rc-two' },
         field('CAD charged (CAD 청구액)', h('input', { type: 'text', id: 'rc-cad', inputmode: 'decimal', value: draft.cadText, autocomplete: 'off', oninput: (e) => { draft.cadText = e.target.value; } })),
         field('FX rate (환율)', h('input', { type: 'text', id: 'rc-rate', inputmode: 'decimal', value: draft.rateText, placeholder: 'CAD per 1 ' + ccy, autocomplete: 'off', oninput: (e) => { draft.rateText = e.target.value; } }))));
     }
@@ -299,6 +323,14 @@ function openReview(api, draft, close, show, shell) {
       if (res.error) { saving = false; if (btn) btn.disabled = false; errEl.textContent = res.error; return; }
       const puts = { Transactions: [res.txn], Postings: res.postings, LineItems: res.lineItems };
       const order = ['Receipts', 'LineItems', 'Postings', 'Transactions'];
+      // 영수증의 카드 뒷4자리를 고른 결제 계좌에 기억시키기 (체크했을 때만 · 이미 있는 번호는 건너뜀)
+      if (!editing && draft.pay && draft.pay.last4 && draft.remember4 && draft.fromId) {
+        const raw = data.accounts.find((a) => String(a.account_id) === String(draft.fromId));
+        if (raw && R.last4List(raw.last4).indexOf(draft.pay.last4) < 0) {
+          puts.Accounts = [Object.assign({}, raw, { last4: R.cleanLast4((raw.last4 ? raw.last4 + ', ' : '') + draft.pay.last4), updated_at: L.nowIso() })];
+          order.unshift('Accounts');
+        }
+      }
       if (res.receipt) puts.Receipts = [res.receipt];
       await sync.saveBatch(puts, order);
       if (res.receipt && res.receipt.drive_file_id && draft.meta && draft.meta.b64) { try { await RV.cachePut(res.receipt.drive_file_id, draft.meta.mime, draft.meta.b64); } catch (e) { /* 못 넣어도 저장은 완료 */ } }

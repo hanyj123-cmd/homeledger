@@ -184,7 +184,24 @@ export function rulesCard(api) {
   const accMap = api.accMap;
   const total = ruleList(rules, accMap, '').length;
 
-  const head = h('div', { class: 'set-h' }, h('span', { class: 'set-ic' }, icon('tag', 22)), h('h2', null, 'Auto-categorize rules ', h('span', { class: 'ko' }, '(자동 분류 규칙)')));
+  // 규칙이 많아 설정 화면이 길어지므로 평소에는 접어 두고, 제목을 누르면 펼칩니다 (펼침 상태는 다시 그려도 유지)
+  if (S.open === undefined) S.open = false;
+  const chev = h('span', { class: 'fold-chev', 'aria-hidden': 'true' }, icon('down', 22));
+  const foldTxt = () => total + ' · ' + (S.open ? 'Close (접기)' : 'Open (펼치기)');
+  const foldCount = h('span', { class: 'fold-count', id: 'rules-fold-count' }, foldTxt());
+  const head = h('button', {
+    type: 'button', class: 'set-h set-fold' + (S.open ? ' open' : ''), id: 'rules-toggle', 'aria-expanded': String(!!S.open), 'aria-controls': 'rules-body',
+    onclick: () => {
+      S.open = !S.open;
+      const b = document.getElementById('rules-body');
+      if (b) b.hidden = !S.open;
+      head.classList.toggle('open', S.open);
+      head.setAttribute('aria-expanded', String(S.open));
+      foldCount.textContent = foldTxt();
+    }
+  }, h('span', { class: 'set-ic' }, icon('tag', 22)),
+  h('h2', null, 'Auto-categorize rules ', h('span', { class: 'ko' }, '(자동 분류 규칙)')),
+  foldCount, chev);
   const intro = h('p', { class: 'set-note' }, 'When a merchant name contains or starts with a word, that category is used automatically, e.g. starts with TGTG → Coffee (가게 이름에 단어가 들어 있거나 그 단어로 시작하면 자동으로 그 카테고리로 분류해요. 예: TGTG 로 시작 → 카페). Upper/lower case and symbols are ignored; the longest word wins (대소문자·기호는 무시, 가장 긴 단어가 우선).');
 
   // ── 목록
@@ -347,7 +364,8 @@ export function rulesCard(api) {
 
   drawList();
   drawPresets();
-  return h('section', { class: 'card set-card wide', id: 'set-rules' }, head, intro,
-    h('div', { class: 'rule-tools' }, h('div', { class: 'search' }, icon('search', 20), search), countEl),
-    listBox, h('div', { class: 'btnrow center' }, moreBtn), addBox, presetBox);
+  return h('section', { class: 'card set-card wide', id: 'set-rules' }, head,
+    h('div', { class: 'rules-body', id: 'rules-body', hidden: !S.open }, intro,
+      h('div', { class: 'rule-tools' }, h('div', { class: 'search' }, icon('search', 20), search), countEl),
+      listBox, h('div', { class: 'btnrow center' }, moreBtn), addBox, presetBox));
 }
