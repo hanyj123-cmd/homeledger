@@ -245,7 +245,12 @@ export function render(api) {
     let mode = self.__mode || '';
     const state = self.__msg || { text: '', err: false };
     const setMode = (m, mm) => { self.__mode = m; self.__msg = mm || { text: '', err: false }; redraw(); };
-    const has = lock.hasPin();
+    const hasPinSet = lock.hasPin();
+    const bioOn = lock.hasBio();
+    const has = lock.isLockEnabled();
+    const bioSup = lock.bioSupported();
+    if (bioSup && self.__bioAvail === undefined) { self.__bioAvail = null; lock.bioAvailable().then((v) => { self.__bioAvail = !!v; redraw(); }, () => { self.__bioAvail = false; redraw(); }); }
+    const bioAvail = self.__bioAvail !== false && bioSup;
     const idle = getIdleMinutes();
     const pinField = (id, label) => h('label', { class: 'field' }, h('span', { class: 'lbl' }, label), h('input', {
       type: 'password', id, inputmode: 'numeric', pattern: '[0-9]*', maxlength: '6', autocomplete: 'off', placeholder: '••••',
@@ -308,12 +313,30 @@ export function render(api) {
     return [
       head('lock', 'Security', '잠금'),
       kv('App lock (앱 잠금)', h('span', { class: 'set-pill ' + (has ? 'ok' : 'off') }, has ? 'On (켜짐)' : 'Off (꺼짐)'), 'set-pin-state'),
+      h('div', { class: 'set-switchrow', id: 'set-bio-row' },
+        h('div', null, h('b', null, 'Device unlock (기기 인증)'),
+          h('div', { class: 'hint', id: 'set-bio-hint' }, !bioSup ? 'Not available in this browser (이 브라우저에서는 쓸 수 없어요). Open the installed app over https (설치한 앱에서 열어 보세요).'
+            : !bioAvail ? 'Set up Face ID, fingerprint or a device passcode in your phone settings first (기기 설정에서 Face ID · 지문 · 화면 잠금을 먼저 설정하세요).'
+              : bioOn ? 'On — Face ID, fingerprint or device passcode is asked when the app opens (앱을 열 때 Face ID · 지문 · 기기 암호로 확인합니다).'
+                : 'Ask for Face ID, fingerprint or device passcode when the app opens (앱을 열 때 Face ID · 지문 · 기기 암호로 한 번 더 확인합니다).')),
+        h('button', {
+          type: 'button', class: 'set-switch' + (bioOn ? ' on' : ''), id: 'set-bio-toggle', role: 'switch', 'aria-checked': String(bioOn), disabled: !bioOn && !bioAvail,
+          'aria-label': bioOn ? 'Turn device unlock off (기기 인증 끄기)' : 'Turn device unlock on (기기 인증 켜기)',
+          onclick: async (e) => {
+            const b = e.currentTarget;
+            if (bioOn) { lock.disableBio(); toast('Device unlock off (기기 인증을 껐어요)'); setMode('', { text: 'Device unlock off (기기 인증을 껐어요)', err: false }); return; }
+            b.disabled = true;
+            try { await lock.enableBio(); toast('Device unlock on (기기 인증을 켰어요)'); setMode('', { text: 'Device unlock on — you will be asked next time you open the app (다음에 앱을 열 때부터 확인합니다)', err: false }); }
+            catch (err) { b.disabled = false; fail(msg(err)); }
+          }
+        }, h('i'))),
       form,
       form ? null : h('div', { class: 'btnrow' },
         has ? [
-          h('button', { type: 'button', class: 'btn', id: 'set-lock-now', onclick: () => { if (!lock.lockNow()) toast('Set a PIN first (먼저 암호를 설정하세요)'); } }, icon('lock', 18), 'Lock now (지금 잠그기)'),
-          h('button', { type: 'button', class: 'btn secondary', id: 'set-pin-change', onclick: () => setMode('change') }, 'Change PIN (암호 변경)'),
-          h('button', { type: 'button', class: 'btn danger', id: 'set-pin-off', onclick: () => setMode('remove') }, 'Remove PIN (암호 해제)')
+          h('button', { type: 'button', class: 'btn', id: 'set-lock-now', onclick: () => { if (!lock.lockNow()) toast('Turn on a lock first (먼저 잠금을 켜세요)'); } }, icon('lock', 18), 'Lock now (지금 잠그기)'),
+          hasPinSet ? h('button', { type: 'button', class: 'btn secondary', id: 'set-pin-change', onclick: () => setMode('change') }, 'Change PIN (암호 변경)') : null,
+          hasPinSet ? h('button', { type: 'button', class: 'btn danger', id: 'set-pin-off', onclick: () => setMode('remove') }, 'Remove PIN (암호 해제)') : null,
+          !hasPinSet ? h('button', { type: 'button', class: 'btn secondary', id: 'set-pin-set', onclick: () => setMode('set') }, 'Set backup PIN (보조 암호 설정)') : null
         ] : h('button', { type: 'button', class: 'btn', id: 'set-pin-set', onclick: () => setMode('set') }, icon('lock', 18), 'Set PIN (암호 설정)')),
       msgEl,
       h('label', { class: 'field set-idle' }, h('span', { class: 'lbl' }, 'Auto-lock after (자동 잠금 시간)'),
@@ -321,7 +344,8 @@ export function render(api) {
           id: 'set-idle', disabled: !has, 'aria-label': 'Auto-lock after (자동 잠금 시간)',
           onchange: (e) => { const v = setIdleMinutes(e.target.value); toast(v ? 'Auto-lock: ' + v + ' min (' + v + '분 후 자동 잠금)' : 'Lock only when the app opens (앱을 열 때만 잠금)'); }
         }, IDLE_CHOICES.map((c) => h('option', { value: String(c[0]), selected: c[0] === idle }, c[1] + (c[2] ? ' — ' + c[2] : ''))))),
-      !has ? h('div', { class: 'hint' }, 'Set a PIN first (먼저 암호를 설정하세요).') : null,
+      !has ? h('div', { class: 'hint' }, 'Turn on device unlock or set a PIN first (기기 인증을 켜거나 암호를 먼저 설정하세요).') : null,
+      bioOn && !hasPinSet ? h('div', { class: 'hint', id: 'set-bio-nopin' }, 'Tip: also set a backup PIN, in case Face ID does not work (Face ID 가 안 될 때를 위해 보조 암호도 만들어 두세요).') : null,
       note('This is a convenience lock for this device, not encryption. Google sign-in is separate. (이 기기의 편의 잠금이며 암호화가 아닙니다. 구글 로그인은 별도입니다.)')
     ];
   });

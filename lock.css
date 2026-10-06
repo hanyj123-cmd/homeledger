@@ -147,7 +147,7 @@ html.hl-locked, html.hl-locked body { overflow: hidden; }
 @media (max-height: 520px) and (orientation: landscape) {
   .lock-panel {
     width: min(100%, 640px); display: grid; grid-template-columns: 1fr 1fr; column-gap: 44px; align-items: center; justify-items: center;
-    grid-template-areas: "head pad" "dots pad" "msg pad" "forgot pad";
+    grid-template-areas: "head pad" "bio pad" "dots pad" "msg pad" "forgot pad";
   }
   .lock-head { grid-area: head; }
   .lock-dots { grid-area: dots; margin: 16px 0 4px; }
@@ -189,4 +189,32 @@ html.hl-locked, html.hl-locked body { overflow: hidden; }
   .lock-key { border: 2px solid ButtonText; background: ButtonFace; color: ButtonText; }
   .lock-dot { border-color: CanvasText; }
   .lock-dot.on { background: Highlight; border-color: Highlight; }
+}
+
+/* ── 기기 인증 버튼 (Face ID / 지문 / 기기 암호) */
+.lock-bio {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; min-height: 54px; margin: 6px 0 14px; padding: 12px 18px; border-radius: 999px;
+  border: 1px solid var(--lk-fn-line); background: var(--lk-fn-bg); color: #fff;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  font: inherit; font-size: 1rem; font-weight: 600; cursor: pointer; touch-action: manipulation;
+  transition: background-color 0.14s, transform 0.08s ease-out, opacity 0.2s;
+}
+.lock-bio:hover { background: rgba(255, 255, 255, 0.22); }
+.lock-bio:active { background: rgba(255, 255, 255, 0.3); transform: scale(0.97); }
+.lock-bio:focus-visible { outline: 3px solid var(--lk-hi); outline-offset: 3px; }
+.lock-bio:disabled { opacity: 0.55; cursor: progress; transform: none; }
+.lock-bio svg { flex: none; color: var(--lk-hi); }
+/* 기기 인증만 쓸 때: 큰 버튼 하나 */
+.lock-bioonly .lock-bio { min-height: 64px; margin: 22px 0 6px; font-size: 1.1rem; background: var(--lk-pill); color: var(--lk-pill-ink); border-color: transparent; box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.55); }
+.lock-bioonly .lock-bio:hover { background: var(--lk-pill-hover); }
+.lock-bioonly .lock-bio:active { background: var(--lk-pill-down); }
+.lock-bioonly .lock-bio svg { color: var(--lk-c); }
+@media (max-height: 520px) and (orientation: landscape) {
+  .lock-bio { grid-area: bio; margin: 10px 0 2px; min-height: 46px; }
+  .lock-bioonly .lock-panel { grid-template-areas: "head bio" "msg bio" "forgot bio"; }
+  .lock-bioonly .lock-bio { grid-area: bio; }
+}
+@media (forced-colors: active) {
+  .lock-bio { border: 2px solid ButtonText; background: ButtonFace; color: ButtonText; }
 }

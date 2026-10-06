@@ -46,7 +46,7 @@ export async function start() {
     lock.initLock({
       idleMinutes: settingsui.getIdleMinutes(),
       onForgot: () => {
-        if (window.confirm('PIN 을 잊으셨나요? PIN 을 지우면 이 기기에서 로그아웃되고, 다시 구글 로그인이 필요합니다. 계속할까요?')) {
+        if (window.confirm('잠금을 열 수 없나요? 잠금(PIN·기기 인증)을 모두 지우면 이 기기에서 로그아웃되고, 다시 구글 로그인이 필요합니다. 계속할까요?')) {
           lock.forceClearPin();
           try { auth.signOut(); } catch (e) { /* ignore */ }
         }
