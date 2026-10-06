@@ -21,6 +21,8 @@ import * as settingsui from './settingsui.js';
 import * as theme from './theme.js';
 import * as txnform from './txnform.js';
 import * as xfer from './xfermatch.js';
+import * as RV from './receiptview.js';
+import * as models from './models.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, ccy) => L.fmtMoney(n, ccy);
@@ -89,6 +91,7 @@ async function reload() {
   state.rev++;
   state.metaCache = null;
   state.anCache = null;
+  try { models.fromMeta(metaAll().gemini); } catch (e) { /* 모델 선택은 없어도 자동으로 동작 */ }
 }
 
 /** 설정(Settings 시트의 JSON) — 데이터가 바뀔 때만 다시 읽음 */
@@ -276,6 +279,7 @@ function drillApi() {
   return {
     h, fmt, toast, state, reload, renderBody,
     openForm: (id, defaults) => openForm(id, defaults),
+    viewReceipt: (id) => RV.viewTxnReceipt(receiptApi(), id),
     goSearch: (text) => { state.query = text; state.acct = ''; state.tab = 'txns'; drill.close(); renderAll(); }
   };
 }
@@ -306,6 +310,7 @@ function renderTxns() {
     rerender: () => renderTxns(),
     openForm: (id, defaults) => openForm(id, defaults),
     openScan: () => receiptui.openScan(receiptApi()),
+    viewReceipt: (id) => RV.viewTxnReceipt(receiptApi(), id),
     goImport: () => { state.tab = 'import'; importui.resetIfDone(); drill.close(); renderAll(); },
     drillApi
   }));
@@ -433,11 +438,12 @@ function renderSettings() {
 
 // ───────── 거래 입력/수정 폼 (js/txnform.js) ─────────
 
-const receiptApi = () => ({ h, toast, state, fmt, reload, renderBody });
+const receiptApi = () => ({ h, toast, state, fmt, reload, renderBody, saveBatch: async (puts, order) => { await sync.saveBatch(puts, order); await reload(); renderBody(true); } });
 
 export function openForm(txnId, defaults) {
   if (txnId && receiptui.isReceiptTxn(state, txnId)) { receiptui.openEdit(receiptApi(), txnId); return; }
   let defaultOwner = '';
   if (!txnId) { try { defaultOwner = settingsui.defaultOwner(metaAll().users, auth.getState().email) || ''; } catch (e) { /* 기본값 유지 */ } }
-  txnform.openForm({ h, fmt, toast, state, reload, renderBody, defaultOwner, openScan: () => receiptui.openScan(receiptApi()) }, txnId, defaults);
+  txnform.openForm({ h, fmt, toast, state, reload, renderBody, defaultOwner, openScan: () => receiptui.openScan(receiptApi()),
+    viewReceipt: (id) => RV.viewTxnReceipt(receiptApi(), id), attachReceipt: (id) => RV.attach(receiptApi(), id) }, txnId, defaults);
 }

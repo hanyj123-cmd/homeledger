@@ -4,6 +4,7 @@
 import { CONFIG } from './config.js';
 import { getToken } from './auth.js';
 import { getMeta, setMeta } from './store.js';
+import * as models from './models.js';
 
 export const TTL_MS = 12 * 60 * 60 * 1000;      // 같은 질문·같은 숫자의 AI 답변은 12시간 동안 다시 쓰기
 export const TIMEOUT_MS = 45000;
@@ -162,7 +163,7 @@ export function advise(kind, context, opts) {
       const hit = await cachedAdvice(kind, context, question);
       if (hit) return hit.data;
     }
-    const res = await post({ action: 'advise', kind, context, question: question || undefined, lang: 'ko' }, opts);
+    const res = await post(Object.assign({ action: 'advise', kind, context, question: question || undefined, lang: 'ko' }, models.payload('ai')), opts);
     const data = shapeAdvice(res.data);
     try { await setMeta(key, { at: Date.now(), data }); } catch (e) { /* 저장 실패해도 답변은 보여줌 */ }
     return data;

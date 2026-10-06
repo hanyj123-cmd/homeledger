@@ -2,6 +2,7 @@
 // 모두 이 기기 안에서 계산하는 순수 로직입니다. (AI 는 버튼을 눌렀을 때만, 가게 이름만 보냅니다.)
 import * as L from './ledger.js';
 import { callApi } from './receipts.js';
+import * as models from './models.js';
 
 export const SOURCE_LABEL = { rule: 'Remembered (기억함)', history: 'Past txns (과거 거래)', payment: 'Card payment (카드 결제)', keyword: 'Guess (추측)', ai: 'AI guess (AI 추측)', user: 'You (직접 선택)' };
 
@@ -178,7 +179,7 @@ export async function askAI(texts, accounts) {
   const out = new Map();
   for (let i = 0; i < texts.length; i += 80) {
     const chunk = texts.slice(i, i + 80).map((t, j) => ({ id: String(i + j), text: String(t).slice(0, 80) }));
-    const res = await callApi({ action: 'categorize', items: chunk, categories: cats });
+    const res = await callApi(Object.assign({ action: 'categorize', items: chunk, categories: cats }, models.payload('ai')));
     (res.results || []).forEach((r) => {
       const t = texts[Number(r.id)];
       if (t !== undefined && r.category_id && cats.some((c) => c.id === String(r.category_id))) out.set(t, { accountId: String(r.category_id), confidence: Number(r.confidence) || 0.6 });

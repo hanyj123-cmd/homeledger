@@ -11,6 +11,11 @@ function lsSet(k, v) { try { if (v === null || v === '') localStorage.removeItem
 export function lang() { const v = lsGet(LANG_KEY); return v === 'ko' || v === 'en' ? v : 'both'; }
 export function setLang(v) { lsSet(LANG_KEY, v === 'ko' || v === 'en' ? v : ''); }
 
+/** 영수증 사진 저장 방식 (이 기기): 'scan' 흑백 스캔본 · 'color' 컬러 스캔본 · 'orig' 원본 */
+const SCAN_KEY = 'hl_scan';
+export function scanMode() { const v = lsGet(SCAN_KEY); return v === 'color' || v === 'orig' ? v : 'scan'; }
+export function setScanMode(v) { lsSet(SCAN_KEY, v === 'color' || v === 'orig' ? v : ''); }
+
 /** 보고서 금액을 달러 단위(소수점 없이)로 보일지 */
 export function rounded() { return lsGet(ROUND_KEY) === '1'; }
 export function setRounded(on) { lsSet(ROUND_KEY, on ? '1' : ''); }

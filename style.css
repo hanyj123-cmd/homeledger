@@ -2188,3 +2188,72 @@ html[data-layout="tablet"] .xf-btns .btn { flex: 1 1 100%; }
 .txf-own button small { font-size: 0.7em; font-weight: 500; opacity: 0.75; }
 .txf-own { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .txf-own button { min-height: 48px; padding: 4px 2px; font-size: 0.86rem; }
+
+/* ═══ v0.15 영수증 보기 · 스캔본 · AI 모델 · 카테고리 삭제 ═══ */
+/* 거래 목록의 카메라 아이콘 (누르면 영수증 보기) — 눈에 보이는 건 작지만 누르는 영역은 44px */
+.row-title.has-rc, .stmt td.desc .t.has-rc { display: flex; align-items: center; gap: 4px; overflow: visible; white-space: normal; }
+.has-rc .rt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-rc { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin: -14px -8px -14px -2px; color: var(--green-ink); border-radius: 12px; cursor: pointer; transition: background-color 0.15s, transform 0.15s; }
+.row-rc:hover { background: var(--tint); }
+.row-rc:active { transform: scale(0.92); }
+.row-rc:focus-visible { outline: 2px solid var(--focus); outline-offset: -4px; }
+.bk-row .row-rc { pointer-events: none; opacity: 0.6; }
+.dp .rowbtn.rc { color: var(--green-ink); }
+
+/* 영수증 보기 창 */
+.rv-host { position: relative; z-index: 90; }
+.rv-host .backdrop { z-index: 90; background: rgba(8, 12, 7, 0.78); }
+.rv-sheet { display: flex; flex-direction: column; width: min(760px, 100%); max-height: min(94vh, 100dvh); padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+html[data-layout="tablet"] .rv-sheet, html[data-layout="desktop"] .rv-sheet { max-width: 760px; max-height: 92vh; }
+.rv-tt { min-width: 0; }
+.rv-tt h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-sub { color: var(--muted); font-size: 0.84rem; }
+.rv-stage { flex: 1 1 auto; min-height: 260px; overflow: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: flex-start; justify-content: center; touch-action: pan-x pan-y pinch-zoom; }
+.rv-stage.zoomed { justify-content: flex-start; }
+.rv-img { display: block; max-width: none; height: auto; user-select: none; -webkit-user-select: none; -webkit-touch-callout: default; }
+.rv-load, .rv-err { margin: auto; padding: 36px 18px; text-align: center; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.rv-err { color: var(--ink); }
+.rv-spin { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--line-strong); border-top-color: var(--green); animation: rv-turn 0.9s linear infinite; }
+@keyframes rv-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .rv-spin { animation: none; } }
+.rv-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-top: 10px; }
+.rv-zoom { display: inline-flex; align-items: center; gap: 8px; }
+.rv-zoom .btn { min-width: 44px; min-height: 44px; padding: 0 12px; font-size: 1.1rem; justify-content: center; }
+.rv-zl { min-width: 64px; text-align: center; font-weight: 700; color: var(--ink-2); }
+.rv-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.rv-acts .btn, .rv-err .btn { min-height: 44px; }
+.at-for { margin: -4px 0 8px; }
+.at-body .btnrow .btn { min-height: 48px; }
+
+/* 영수증 확인창: 썸네일 버튼 · 걸린 시간 */
+.rc-thumb-btn { float: right; padding: 0; margin: 0 0 8px 10px; border: 0; background: transparent; cursor: zoom-in; border-radius: 8px; position: relative; min-width: 60px; min-height: 80px; }
+.rc-thumb-btn .rc-thumb { float: none; margin: 0; display: block; }
+.rc-thumb-btn::after { content: "⤢"; position: absolute; right: 3px; bottom: 3px; width: 20px; height: 20px; border-radius: 6px; background: var(--surface); color: var(--green-ink); font-size: 0.8rem; line-height: 20px; text-align: center; border: 1px solid var(--line); }
+.rc-took { margin: 0 0 8px; }
+button.txf-receipt { width: 100%; font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+button.txf-receipt:hover { background: var(--tint-line); }
+button.txf-receipt.add { background: var(--surface); border-style: dashed; }
+
+/* 설정: AI 모델 · 영수증 사진 */
+.set-speed { margin: 10px 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.sp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; }
+.sp-row + .sp-row { border-top: 1px solid var(--line); }
+.sp-row b { flex: 1 1 190px; min-width: 0; overflow-wrap: anywhere; font-size: 0.9rem; }
+.sp-ms { font-weight: 700; color: var(--green-ink); min-width: 56px; }
+.sp-row.bad .sp-ms { color: var(--out); font-weight: 600; font-size: 0.82rem; }
+.sp-row .btn { min-height: 44px; }
+#set-model .btnrow .btn, #set-receipts .btnrow .btn { min-height: 44px; }
+.set-scan { flex-wrap: wrap; }
+.set-scan button { min-height: 44px; }
+#set-model-custom { flex: 1 1 160px; min-height: 44px; }
+
+/* 카테고리 · 계좌 삭제 */
+.cf-item { display: flex; align-items: stretch; }
+.cf-item .cf-row { flex: 1 1 auto; min-width: 0; }
+.cf-trash { flex: none; width: 48px; border: 0; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: background-color 0.15s, color 0.15s; }
+.cf-trash:hover { background: var(--surface-2); color: var(--out); }
+.cf-trash:active { background: var(--tint); }
+.cf-tabs button, .cf-add { min-height: 44px; }
+.btn.danger.outline { background: transparent; }
+#cd-use, #cd-unused { margin: 4px 0 10px; line-height: 1.5; }
+#cd-dest { width: 100%; min-height: 48px; }

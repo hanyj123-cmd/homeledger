@@ -19,6 +19,9 @@ import * as MG from './migrate.js';
 import { categoriesCard } from './catform.js';
 import * as prefs from './prefs.js';
 import * as XF from './xfermatch.js';
+import * as RV from './receiptview.js';
+import * as R from './receipts.js';
+import * as models from './models.js';
 
 export const IDLE_KEY = 'hl_lock_idle';
 export const OWNER_KEY = 'hl_default_owner';
@@ -51,6 +54,10 @@ export function defaultOwner(users, email) {   // eslint-disable-line no-unused-
   const own = getDefaultOwnerSetting();
   return own || 'Joint';                         // 기본은 모두 공동(Joint)
 }
+
+// 모델 선택 카드: 속도 측정 결과와 서버에서 불러온 모델 목록 (설정을 저장하면 화면이 다시 그려지므로 모듈에 둡니다)
+const modelUi = { list: null, speed: {}, busy: '', err: '' };
+export function _modelUi() { return modelUi; }
 
 // ───────── 작은 도구 ─────────
 const fmtWhen = (ms) => (ms ? new Date(ms).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—');
@@ -492,6 +499,110 @@ export function render(api) {
     ];
   });
 
+
+  // ═════ 6-2. 영수증 사진 (스캔본 · 드라이브) ═════
+  const secReceipts = live('set-receipts', (redraw, self) => {
+    const mode = prefs.scanMode();
+    const cnt = h('span', { id: 'set-rc-cache' }, '…');
+    RV.cacheCount().then((n) => { cnt.textContent = n + ' photo' + (n === 1 ? '' : 's') + ' (사진 ' + n + '장)'; }, () => { cnt.textContent = '—'; });
+    return [
+      head('camera', 'Receipt photos', '영수증 사진'),
+      h('h3', { class: 'set-sub' }, 'Save as (저장 방식)'),
+      h('div', { class: 'segtd set-scan', role: 'radiogroup', id: 'set-scan' }, [['scan', 'Scan (스캔본)'], ['color', 'Color scan (컬러 스캔)'], ['orig', 'Original (원본)']].map(([v, lab]) => h('button', {
+        type: 'button', role: 'radio', class: mode === v ? 'on' : '', 'aria-checked': String(mode === v), 'data-scan-opt': v,
+        onclick: () => { prefs.setScanMode(v); toast(v === 'orig' ? 'Original photos (원본 그대로 저장)' : v === 'color' ? 'Color scan (컬러 스캔본으로 저장)' : 'Black & white scan (흑백 스캔본으로 저장)'); redraw(); }
+      }, lab))),
+      note('Scan: the desk around the paper is cropped, shadows are evened out and the text is darkened, so it looks like a scanner copy and uploads faster (스캔본: 종이 주변 책상을 자르고 그림자를 펴고 글씨를 진하게 해서 스캐너로 뜬 것처럼 저장해요. 용량이 작아 업로드도 빨라요). This setting is for this device only (이 기기에만 적용).'),
+      h('h3', { class: 'set-sub' }, 'Where are they? (어디에 저장되나요)'),
+      note('Google Drive folder "Home Ledger Receipts" (구글 드라이브의 "Home Ledger Receipts" 폴더). In the Ledger, tap the camera icon on a transaction to view the receipt any time (거래 목록의 카메라 아이콘을 누르면 언제든 다시 볼 수 있어요). To add a photo to an older transaction, open it and tap "Attach receipt photo" (예전 거래에는 거래를 열어 "영수증 사진 붙이기").'),
+      kv('Kept on this device (이 기기에 저장된 사진)', cnt),
+      h('div', { class: 'btnrow' }, h('button', {
+        type: 'button', class: 'btn secondary', id: 'set-rc-clear',
+        onclick: async () => { const n = await RV.cacheClear(); toast(n ? n + ' photos removed from this device (이 기기에서 사진 ' + n + '장을 지웠어요. 드라이브에는 그대로 있어요)' : 'Nothing to remove (지울 사진이 없어요)'); redraw(); }
+      }, icon('trash', 18), 'Clear device copies (이 기기의 사본 지우기)'))
+    ];
+  });
+
+  // ═════ 6-3. Gemini 모델 선택 ═════
+  const secModel = live('set-model', (redraw, self) => {
+    const cur = Object.assign({ receipt: '', ai: '' }, meta.gemini || {});
+    const avail = ai.aiAvailable();
+    const known = [];
+    models.PRESETS.forEach((p) => { if (p.id) known.push(p.id); });
+    (modelUi.list || []).forEach((m) => { if (known.indexOf(m) < 0) known.push(m); });
+    ['receipt', 'ai'].forEach((k) => { if (cur[k] && known.indexOf(cur[k]) < 0) known.push(cur[k]); });
+    const ms = (m) => { const r = modelUi.speed[m]; return r ? (r.err ? ' — ✕' : ' — ' + (r.ms / 1000).toFixed(1) + ' s') : ''; };
+    const preset = (id) => models.PRESETS.find((p) => p.id === id);
+    const optLabel = (id) => (id ? id + (preset(id) ? ' · ' + preset(id).en + ' (' + preset(id).ko + ')' : '') : preset('').en + ' (' + preset('').ko + ')') + (id ? ms(id) : '');
+    const save = async (kind, val) => {
+      try {
+        await api.saveSettings(M.metaRow(api.data.settings, M.KEYS_META.gemini, Object.assign({}, cur, { [kind]: models.clean(val) }), 'gemini', L.nowIso()));
+        toast(val ? 'Model: ' + val + ' (모델을 바꿨어요)' : 'Model: auto (자동으로 돌아갔어요)');
+      } catch (e) { toast('저장하지 못했습니다: ' + msg(e)); }
+    };
+    const picker = (kind, labelEn, labelKo) => h('label', { class: 'field' }, h('span', { class: 'lbl' }, labelEn + ' (' + labelKo + ')'),
+      h('select', { id: 'set-model-' + kind, 'aria-label': labelEn + ' (' + labelKo + ')', onchange: (e) => save(kind, e.target.value) },
+        h('option', { value: '', selected: !cur[kind] }, optLabel('')),
+        known.map((m) => h('option', { value: m, selected: cur[kind] === m }, optLabel(m)))));
+    const runTest = async (name) => {
+      const t0 = Date.now();
+      try {
+        let target = name;
+        if (!target) { const p = await R.callApi({ action: 'ping' }); target = p.model; }
+        const r = await R.callApi({ action: 'testModel', model: target });
+        modelUi.speed[target] = { ms: r.ms || (Date.now() - t0), err: '' };
+        if (!name) modelUi.speed[''] = modelUi.speed[target];
+        return target;
+      } catch (e) { const k = name || '(auto)'; modelUi.speed[k] = { ms: 0, err: msg(e) }; modelUi.err = msg(e); throw e; }
+    };
+    const testOne = async (kind) => {
+      modelUi.busy = kind; modelUi.err = ''; redraw();
+      try { await runTest(cur[kind]); } catch (e) { /* 오류는 아래에 표시 */ }
+      modelUi.busy = ''; redraw();
+    };
+    const testAll = async () => {
+      modelUi.busy = 'all'; modelUi.err = ''; redraw();
+      const list = models.PRESETS.filter((p) => p.id).map((p) => p.id).concat((modelUi.list || []).filter((m) => !models.PRESETS.some((p) => p.id === m)).slice(0, 4));
+      for (const m of list) { try { await runTest(m); } catch (e) { /* 안 되는 모델은 ✕ 로 표시 */ } redraw(); }
+      modelUi.busy = ''; modelUi.err = ''; redraw();
+    };
+    const loadList = async () => {
+      modelUi.busy = 'list'; modelUi.err = ''; redraw();
+      try { const r = await R.callApi({ action: 'listModels' }); modelUi.list = r.models || []; toast((modelUi.list.length) + ' models found (쓸 수 있는 모델 ' + modelUi.list.length + '개)'); }
+      catch (e) { modelUi.err = /알 수 없는 요청/.test(msg(e)) ? '서버가 아직 모델 선택을 지원하지 않습니다. Apps Script 를 새 버전(v5)으로 다시 배포하세요. (Redeploy Apps Script as v5)' : msg(e); }
+      modelUi.busy = ''; redraw();
+    };
+    const rows = Object.keys(modelUi.speed).filter((k) => k && modelUi.speed[k]).sort((a, b) => (modelUi.speed[a].err ? 1 : 0) - (modelUi.speed[b].err ? 1 : 0) || modelUi.speed[a].ms - modelUi.speed[b].ms);
+    const customIn = h('input', { type: 'text', id: 'set-model-custom', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: 'gemini-…', 'aria-label': 'Model name (모델 이름)' });
+    const useCustom = (kind) => { const v = models.clean(customIn.value); if (!v) { toast('Check the name (모델 이름을 확인하세요: gemini-로 시작)'); return; } save(kind, v); };
+    const busy = !!modelUi.busy;
+    return [
+      head('spark', 'AI model (speed)', 'AI 모델 · 속도'),
+      !avail ? h('div', { class: 'set-warn', id: 'set-model-off' }, A.getState().signedIn ? 'The server is not ready (서버 설정이 필요합니다).' : 'Sign in first (먼저 로그인하세요).') : null,
+      note('Receipt reading feels slow? Pick a lighter model. "Test speed" tells you the real time on your account (영수증 읽기가 느리면 더 가벼운 모델을 고르세요. "속도 측정"으로 내 계정에서 실제로 몇 초 걸리는지 볼 수 있어요). Shared by everyone using this ledger (이 장부를 쓰는 가족 모두에게 같이 적용돼요).'),
+      picker('receipt', 'Receipt reading', '영수증 읽기'),
+      picker('ai', 'AI advice & auto-categorize', 'AI 조언 · 자동 분류'),
+      h('div', { class: 'btnrow' },
+        h('button', { type: 'button', class: 'btn', id: 'set-model-test-all', disabled: !avail || busy, onclick: testAll }, icon('sync', 18), modelUi.busy === 'all' ? 'Testing… (측정 중)' : 'Compare speed (속도 비교)'),
+        h('button', { type: 'button', class: 'btn secondary', id: 'set-model-test', disabled: !avail || busy, onclick: () => testOne('receipt') }, modelUi.busy === 'receipt' ? 'Testing… (측정 중)' : 'Test receipt model (영수증 모델 측정)'),
+        h('button', { type: 'button', class: 'btn secondary', id: 'set-model-list', disabled: !avail || busy, onclick: loadList }, modelUi.busy === 'list' ? 'Loading… (불러오는 중)' : 'Load my models (내 모델 목록)')),
+      rows.length ? h('div', { class: 'set-speed', id: 'set-speed' }, rows.map((m) => {
+        const r = modelUi.speed[m];
+        return h('div', { class: 'sp-row' + (r.err ? ' bad' : ''), 'data-model': m },
+          h('b', null, m),
+          h('span', { class: 'sp-ms' }, r.err ? '✕ ' + (r.err.length > 60 ? r.err.slice(0, 60) + '…' : r.err) : (r.ms / 1000).toFixed(1) + ' s'),
+          r.err ? null : h('button', { type: 'button', class: 'btn secondary sm', 'data-use': 'receipt', onclick: () => save('receipt', m) }, 'Use for receipts (영수증에)'),
+          r.err ? null : h('button', { type: 'button', class: 'btn secondary sm', 'data-use': 'ai', onclick: () => save('ai', m) }, 'Use for AI (AI에)'));
+      })) : null,
+      modelUi.err ? h('div', { class: 'err', id: 'set-model-err', role: 'alert' }, modelUi.err) : null,
+      h('h3', { class: 'set-sub' }, 'Other model name (직접 입력)'),
+      h('div', { class: 'map-row add' }, customIn,
+        h('button', { type: 'button', class: 'btn secondary', id: 'set-model-use-r', onclick: () => useCustom('receipt') }, 'Receipts (영수증)'),
+        h('button', { type: 'button', class: 'btn secondary', id: 'set-model-use-a', onclick: () => useCustom('ai') }, 'AI')),
+      note('If the chosen model does not work, the server tries the next one automatically, so nothing breaks (고른 모델이 안 되면 서버가 알아서 다음 모델로 넘어가요). Speed depends on the time of day and your free quota (속도는 시간대와 무료 사용량에 따라 달라져요).')
+    ];
+  });
+
   // ═════ 7. 규칙 (rulesui.js) ═════
   const secRules = rulesCard(Object.assign({}, api, { icon }));
 
@@ -635,7 +746,7 @@ export function render(api) {
   });
 
   // ═════ 배치 ═════
-  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secRules, secXfer, categoriesCard(api, icon), secInstall, secData, secMigrate);
+  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secModel, secReceipts, secRules, secXfer, categoriesCard(api, icon), secInstall, secData, secMigrate);
   root.append(h('div', { class: 'page set-page', }, grid,
     h('div', { class: 'set-foot' },
       h('div', { class: 'muted small', id: 'set-foot-ver' }, 'Home Ledger v' + CONFIG.APP_VERSION),

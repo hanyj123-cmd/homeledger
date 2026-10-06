@@ -12,7 +12,8 @@ export const KEYS_META = {
   accrual: 'meta.accrual',    // {annual, since, opening, code, acct}
   users: 'meta.users',        // { 'email@x.com': 'Ms Kim' }
   plan: 'meta.plan',          // {extra, strategy, growth, horizon}
-  ai: 'meta.ai'               // {enabled}
+  ai: 'meta.ai',              // {enabled}
+  gemini: 'meta.gemini'       // {receipt:'모델', ai:'모델'} ('' = 자동)
 };
 export const NOTE_PREFIX = 'note.';
 const clone = (v) => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
@@ -47,7 +48,8 @@ export function readAll(settings) {
     accrual: readJson(settings, KEYS_META.accrual, null),
     users: readJson(settings, KEYS_META.users, {}),
     plan: Object.assign({ extra: 0, strategy: 'avalanche', growth: 3, horizon: 12 }, readJson(settings, KEYS_META.plan, {})),
-    ai: Object.assign({ enabled: true }, readJson(settings, KEYS_META.ai, {}))
+    ai: Object.assign({ enabled: true }, readJson(settings, KEYS_META.ai, {})),
+    gemini: Object.assign({ receipt: '', ai: '' }, readJson(settings, KEYS_META.gemini, {}))
   };
 }
 /** 월별 메모 */

@@ -52,6 +52,7 @@ export function openForm(api, txnId, defaults) {
     if (df.categoryId) { f.categoryId = String(df.categoryId); f.categoryTouched = true; }
   }
   f.autoLine = -1; // 나누기에서 "자동으로 나머지를 받는 줄" (처음 나눌 때 첫 줄)
+  const f0 = JSON.stringify(f);   // 열 때의 값 (저장하지 않은 변경이 있는지 비교용)
 
   const ov = $('overlay');
   const opener = document.activeElement;
@@ -410,9 +411,18 @@ export function openForm(api, txnId, defaults) {
       field('Memo (메모)', h('input', { type: 'text', id: 'f-memo', value: f.memo, autocomplete: 'off', enterkeyhint: 'done', placeholder: 'Optional (선택)', oninput: (e) => { f.memo = e.target.value; } }), { icon: 'memo' }),
       field('Trip tag (여행 태그)', h('input', { type: 'text', id: 'f-trip', value: f.tripTag, autocomplete: 'off', enterkeyhint: 'done', placeholder: 'e.g. Japan 2026', oninput: (e) => { f.tripTag = e.target.value; } }), { icon: 'tag' })];
     const rc = existing ? receiptOf(existing.txn) : null;
-    if (rc) {
+    if (rc && api.viewReceipt) {
+      noteKids.push(h('button', { type: 'button', class: 'txf-receipt wide', id: 'f-receipt', onclick: () => api.viewReceipt(existing.txn.txn_id) },
+        icon('camera', 18), h('span', null, 'View receipt (영수증 보기)'), rc.file_name ? h('span', { class: 'txf-fn' }, rc.file_name) : null, icon('right', 16)));
+    } else if (rc) {
       noteKids.push(h('a', { class: 'txf-receipt wide', id: 'f-receipt', href: 'https://drive.google.com/file/d/' + encodeURIComponent(rc.drive_file_id) + '/view', target: '_blank', rel: 'noopener' },
         icon('camera', 18), h('span', null, 'View receipt (영수증 보기)'), rc.file_name ? h('span', { class: 'txf-fn' }, rc.file_name) : null, icon('open', 16)));
+    } else if (existing && api.attachReceipt) {
+      noteKids.push(h('button', { type: 'button', class: 'txf-receipt wide add', id: 'f-attach', onclick: () => {
+          if (JSON.stringify(f) !== f0 && !window.confirm('Unsaved changes in this form will be lost. Continue? (저장하지 않은 변경은 사라집니다. 계속할까요?)')) return;
+          const id = existing.txn.txn_id; close(true); api.attachReceipt(id);
+        } },
+        icon('camera', 18), h('span', null, 'Attach receipt photo (영수증 사진 붙이기)'), icon('plus', 16)));
     }
     parts.push(group('Notes (메모)', noteKids, { cls: 'txf-notes' }));
 

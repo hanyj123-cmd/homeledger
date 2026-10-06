@@ -1,6 +1,8 @@
 // 카테고리(계정) 추가 · 이름 바꾸기 · 숨기기.
 // 지출/수입 카테고리뿐 아니라 은행 계좌 · 카드 · 대출도 추가할 수 있습니다. 저장은 Accounts 시트에 (로컬 우선).
 import * as L from './ledger.js';
+import { CONFIG } from './config.js';
+import { icon } from './icons.js';
 
 export const KINDS = [
   { key: 'EXPENSE', label: 'Spending (지출)', type: 'EXPENSE' },
@@ -60,6 +62,191 @@ export function makeAccountRow(accounts, f, existing, now) {
     institution: String(f.institution || '').trim(), currency: 'CAD', last4: '', report_group: group,
     sort_order: nextSort(accounts, type, group), is_active: true, updated_at: now, deleted: false
   } };
+}
+
+
+// ───────── 삭제 (지출·수입 카테고리, 계좌·카드·대출) ─────────
+// 거래가 하나도 없으면 바로 삭제, 있으면 다른 항목으로 옮긴 뒤 삭제합니다. (거래·영수증 항목·규칙·예산이 함께 옮겨집니다)
+// 시스템 계정(전달 자금 · 기초 잔액 · 미분류)은 지울 수 없고, 대출·자산 평가 설정에서 쓰는 계정은 먼저 그 설정을 정리해야 합니다.
+export const PROTECTED_IDS = [CONFIG.CLEARING_ID, CONFIG.OPENING_ID, '9999'];
+const CHUNK = 400;
+
+/** 이 계정을 쓰는 것들의 개수와 목록 */
+export function usageOf(data, id) {
+  id = String(id);
+  const live = (x) => !L.truthy(x.deleted);
+  const liveTxn = new Set((data.txns || []).filter(live).map((t) => String(t.txn_id)));
+  const postings = (data.postings || []).filter((p) => live(p) && String(p.account_id) === id && liveTxn.has(String(p.txn_id)));
+  const lineItems = (data.lineItems || []).filter((l) => live(l) && String(l.category_account_id) === id && liveTxn.has(String(l.txn_id)));
+  const rules = (data.rules || []).filter((r) => live(r) && String(r.account_id) === id);
+  const budgets = (data.budgets || []).filter((b) => live(b) && String(b.account_id) === id);
+  const profiles = (data.profiles || []).filter((r) => live(r) && String(r.account_id) === id);
+  const stmtLines = (data.stmtLines || []).filter((r) => live(r) && String(r.account_id) === id);
+  const children = (data.accounts || []).filter((a) => live(a) && String(a.parent_id || '') === id);
+  return { postings, lineItems, rules, budgets, profiles, stmtLines, children, txnCount: new Set(postings.map((p) => String(p.txn_id))).size };
+}
+
+/** 대출·자산 평가·보유 종목·재산세 설정에서 이 계정을 쓰는 곳 (있으면 지울 수 없음) */
+export function metaRefs(meta, id) {
+  id = String(id);
+  const m = meta || {};
+  const out = [];
+  if (m.loans && Object.prototype.hasOwnProperty.call(m.loans, id)) out.push('Loan details (대출 정보)');
+  if (m.debts && Object.prototype.hasOwnProperty.call(m.debts, id)) out.push('Interest rate & limit (이율 · 한도)');
+  if (m.assets && Object.prototype.hasOwnProperty.call(m.assets, id)) out.push('Asset value (자산 평가)');
+  if ((m.holdings || []).some((x) => String(x.acct || '') === id)) out.push('Stock holdings (보유 종목)');
+  if (m.accrual && String(m.accrual.acct || '') === id) out.push('Property-tax accrual (재산세 적립)');
+  return out;
+}
+
+/** 옮길 수 있는 곳: 같은 종류의 켜져 있는 계정 (지출은 "미분류"로도 옮길 수 있음) */
+export function moveTargets(accounts, account) {
+  const id = String(account.account_id);
+  return (accounts || []).filter((a) => !L.truthy(a.deleted) && String(a.account_id) !== id && a.type === account.type &&
+    (L.isActive(a) || false) && (a.type === 'EXPENSE' ? true : String(a.account_id) !== CONFIG.CLEARING_ID && String(a.account_id) !== CONFIG.OPENING_ID));
+}
+
+/** 지울 수 있는지 (이유와 함께) */
+export function deleteCheck(data, meta, account) {
+  const id = String(account.account_id);
+  if (PROTECTED_IDS.indexOf(id) >= 0) return { ok: false, why: 'This is a system account and cannot be deleted (시스템 계정이라 지울 수 없어요).' };
+  if (!['EXPENSE', 'INCOME', 'ASSET', 'LIABILITY'].includes(account.type)) return { ok: false, why: 'This kind cannot be deleted here (이 종류는 여기서 지울 수 없어요).' };
+  const u = usageOf(data, id);
+  if (u.children.length) return { ok: false, why: 'It has sub-accounts (하위 계정이 있어요). Delete or move those first (먼저 정리하세요).' };
+  const refs = metaRefs(meta, id);
+  if (refs.length) return { ok: false, why: 'Used in settings (설정에서 쓰고 있어요): ' + refs.join(', ') + '. Remove it there first, or Hide it instead (먼저 거기서 지우거나 "숨기기"를 쓰세요).' };
+  return { ok: true, usage: u, inUse: !!(u.postings.length || u.lineItems.length || u.stmtLines.length) };
+}
+
+/**
+ * 삭제 계획. destId 는 거래가 있을 때 옮겨 갈 같은 종류의 계정.
+ * → { error } 또는 { steps: [{ puts, order }], counts }  (steps 를 차례로 저장하면 되고, 마지막에 계정이 지워집니다 — 중간에 멈춰도 데이터는 안전)
+ */
+export function planDelete(data, meta, account, destId, now) {
+  const chk = deleteCheck(data, meta, account);
+  if (!chk.ok) return { error: chk.why };
+  const u = chk.usage;
+  const id = String(account.account_id);
+  const raw = L.rawAccount((data.accounts || []).find((a) => String(a.account_id) === id) || account);
+  let dest = null;
+  if (chk.inUse) {
+    dest = moveTargets(data.accounts, raw).find((a) => String(a.account_id) === String(destId));
+    if (!dest) return { error: 'Choose where to move the transactions (거래를 옮길 곳을 고르세요).' };
+  } else if (destId) {
+    dest = moveTargets(data.accounts, raw).find((a) => String(a.account_id) === String(destId)) || null;
+  }
+  const moved = (x, key) => Object.assign({}, x, { [key]: dest ? String(dest.account_id) : x[key], updated_at: now });
+  const gone = (x) => Object.assign({}, x, { deleted: true, updated_at: now });
+  const rowsBy = { Postings: [], LineItems: [], Rules: [], Budgets: [], ImportProfiles: [], StatementLines: [] };
+
+  if (dest) {
+    u.postings.forEach((p) => rowsBy.Postings.push(moved(p, 'account_id')));
+    u.lineItems.forEach((l) => rowsBy.LineItems.push(moved(l, 'category_account_id')));
+    u.rules.forEach((r) => rowsBy.Rules.push(moved(r, 'account_id')));
+    u.profiles.forEach((r) => rowsBy.ImportProfiles.push(moved(r, 'account_id')));
+    u.stmtLines.forEach((r) => rowsBy.StatementLines.push(moved(r, 'account_id')));
+    // 예산: 같은 달에 옮겨 갈 곳에도 예산이 있으면 합치고, 없으면 그대로 옮김
+    const same = (a, b) => String(a.type) === String(b.type) && String(a.vintage) === String(b.vintage) && String(a.year) === String(b.year) && String(a.month) === String(b.month);
+    const destBudgets = (data.budgets || []).filter((b) => !L.truthy(b.deleted) && String(b.account_id) === String(dest.account_id));
+    u.budgets.forEach((b) => {
+      const t = destBudgets.find((x) => same(x, b));
+      if (t) {
+        rowsBy.Budgets.push(Object.assign({}, t, { amount_cad: L.round(L.num(t.amount_cad) + L.num(b.amount_cad), 2), updated_at: now }));
+        rowsBy.Budgets.push(gone(b));
+      } else rowsBy.Budgets.push(moved(b, 'account_id'));
+    });
+  } else {
+    u.rules.forEach((r) => rowsBy.Rules.push(gone(r)));
+    u.budgets.forEach((b) => rowsBy.Budgets.push(gone(b)));
+    u.profiles.forEach((r) => rowsBy.ImportProfiles.push(gone(r)));
+  }
+
+  const steps = [];
+  const order = ['Postings', 'LineItems', 'Rules', 'Budgets', 'ImportProfiles', 'StatementLines'];
+  let cur = {}, n = 0;
+  const flush = () => { if (n) { steps.push({ puts: cur, order: Object.keys(cur) }); cur = {}; n = 0; } };
+  order.forEach((sheet) => {
+    rowsBy[sheet].forEach((row) => {
+      (cur[sheet] = cur[sheet] || []).push(row);
+      if (++n >= CHUNK) flush();
+    });
+  });
+  flush();
+  steps.push({ puts: { Accounts: [Object.assign({}, raw, { deleted: true, is_active: false, updated_at: now })] }, order: ['Accounts'] });
+  return {
+    steps, dest: dest ? String(dest.account_id) : '',
+    counts: { transactions: u.txnCount, postings: u.postings.length, items: u.lineItems.length, rules: u.rules.length, budgets: u.budgets.length }
+  };
+}
+
+/** 삭제 확인 창 (거래가 있으면 옮길 곳을 고르게 함) → 지워졌으면 true */
+export function openDeleteForm(api, account) {
+  const { h } = api;
+  const raw = L.rawAccount(account);
+  const label = (a) => (api.accMap && api.accMap.get(String(a.account_id)) ? L.accLabel(api.accMap.get(String(a.account_id))) : L.accLabel(a));
+  return new Promise((resolve) => {
+    const ov = document.getElementById('overlay');
+    if (!ov) { resolve(false); return; }
+    ov.hidden = false;
+    document.body.classList.add('noscroll');
+    let done = false, busy = false;
+    const close = (ok) => { if (done) return; done = true; ov.hidden = true; ov.replaceChildren(); document.body.classList.remove('noscroll'); document.removeEventListener('keydown', onKey, true); resolve(!!ok); };
+    const onKey = (e) => { if (e.key === 'Escape' && !busy) { e.preventDefault(); close(false); } };
+    document.addEventListener('keydown', onKey, true);
+    const meta = typeof api.meta === 'function' ? api.meta() : {};
+    const chk = deleteCheck(api.data, meta, raw);
+    const err = h('div', { class: 'err', id: 'cd-err', role: 'alert' });
+    const prog = h('div', { class: 'hint', id: 'cd-prog', 'aria-live': 'polite' });
+    let dest = '';
+    const targets = moveTargets(api.data.accounts, raw);
+    const kindWord = raw.type === 'EXPENSE' ? 'category (카테고리)' : raw.type === 'INCOME' ? 'income category (수입 카테고리)' : 'account (계좌)';
+    const body = [];
+    if (!chk.ok) {
+      body.push(h('div', { class: 'card warn-card', id: 'cd-block' }, chk.why));
+    } else {
+      const u = chk.usage;
+      if (chk.inUse) {
+        body.push(h('p', { id: 'cd-use' }, 'This ' + kindWord + ' has ' + u.txnCount + ' transaction' + (u.txnCount === 1 ? '' : 's') + (u.rules.length ? ', ' + u.rules.length + ' rule' + (u.rules.length === 1 ? '' : 's') : '') + (u.budgets.length ? ', ' + u.budgets.length + ' budget line' + (u.budgets.length === 1 ? '' : 's') : '') +
+          ' (이 항목에 거래 ' + u.txnCount + '건' + (u.rules.length ? ', 규칙 ' + u.rules.length + '개' : '') + (u.budgets.length ? ', 예산 ' + u.budgets.length + '줄' : '') + '이 있어요). They will be moved first (먼저 아래 항목으로 옮겨요):'));
+        body.push(h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Move to (옮길 곳)'),
+          h('select', { id: 'cd-dest', onchange: (e) => { dest = e.target.value; } },
+            h('option', { value: '' }, 'Select… (선택)'),
+            targets.map((a) => h('option', { value: a.account_id }, label(a) + (String(a.account_id) === '9999' ? ' — needs a category later (나중에 분류)' : ''))))));
+        if (raw.type === 'ASSET' || raw.type === 'LIABILITY') body.push(h('p', { class: 'hint' }, 'Balances move with the transactions. A transfer between the two accounts becomes a zero-net entry (두 계좌 사이의 이체는 합계 0인 기록이 됩니다).'));
+      } else {
+        body.push(h('p', { id: 'cd-unused' }, 'Nothing uses it yet, so it can be deleted safely (아직 쓰는 거래가 없어서 안전하게 지울 수 있어요).' + (u.rules.length || u.budgets.length ? ' Its ' + (u.rules.length ? u.rules.length + ' rule(s) ' : '') + (u.budgets.length ? u.budgets.length + ' budget line(s) ' : '') + 'will be removed too (함께 지워지는 규칙·예산이 있어요).' : '')));
+      }
+    }
+    const go = async () => {
+      if (busy) return;
+      err.textContent = '';
+      const plan = planDelete(api.data, meta, raw, dest, L.nowIso());
+      if (plan.error) { err.textContent = plan.error; return; }
+      busy = true;
+      const btn = document.getElementById('cd-go'); if (btn) btn.disabled = true;
+      try {
+        const total = plan.steps.length;
+        const rawSave = api.sync && api.sync.saveBatch ? api.sync.saveBatch : null;
+        for (let i = 0; i < total; i++) {
+          const st = plan.steps[i];
+          prog.textContent = total > 1 ? 'Saving… (저장 중) ' + (i + 1) + ' / ' + total : '';
+          if (i < total - 1 && rawSave) await rawSave(st.puts, st.order);
+          else await api.saveBatch(st.puts, st.order);
+        }
+        api.toast('Deleted (삭제했어요): ' + (raw.name_ko || raw.name) + (plan.dest ? ' — moved ' + plan.counts.transactions + ' transactions (거래 ' + plan.counts.transactions + '건을 옮겼어요)' : ''));
+        close(true);
+      } catch (e) { busy = false; if (btn) btn.disabled = false; err.textContent = '삭제하지 못했습니다 (Could not delete): ' + ((e && e.message) || e); }
+    };
+    ov.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => { if (e.target === e.currentTarget && !busy) close(false); } },
+      h('div', { class: 'sheet cf-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'cd-title' },
+        h('div', { class: 'sheet-head' }, h('h2', { id: 'cd-title' }, 'Delete “' + (raw.name_ko || raw.name) + '”? (삭제할까요?)'),
+          h('button', { type: 'button', class: 'icon', 'aria-label': 'Close (닫기)', onclick: () => { if (!busy) close(false); } }, '✕')),
+        body, prog, err,
+        h('div', { class: 'btnrow cf-actions' },
+          chk.ok ? h('button', { type: 'button', class: 'btn danger', id: 'cd-go', onclick: go }, icon('trash', 18), chk.inUse ? 'Move & delete (옮기고 삭제)' : 'Delete (삭제)') : null,
+          h('button', { type: 'button', class: 'btn secondary', id: 'cd-cancel', onclick: () => { if (!busy) close(false); } }, chk.ok ? 'Cancel (취소)' : 'Close (닫기)')),
+        chk.ok ? h('p', { class: 'hint' }, 'Tip: "Hide" keeps everything and only removes it from pick lists (거래를 그대로 두고 선택 목록에서만 빼려면 "숨기기"를 쓰세요).') : null)));
+  });
 }
 
 /**
@@ -132,7 +319,13 @@ export function openCategoryForm(api, opts) {
           h('button', { type: 'button', class: 'btn', id: 'cf-save', onclick: () => save(true) }, existing ? 'Save (저장)' : 'Add (추가)'),
           h('button', { type: 'button', class: 'btn secondary', onclick: () => close(null) }, 'Cancel (취소)'),
           existing && L.isActive(existing) ? h('button', { type: 'button', class: 'btn danger', id: 'cf-hide', onclick: () => save(false) }, 'Hide (숨기기)') : null,
-          existing && !L.isActive(existing) ? h('button', { type: 'button', class: 'btn secondary', id: 'cf-show', onclick: () => save(true) }, 'Show again (다시 보이기)') : null),
+          existing && !L.isActive(existing) ? h('button', { type: 'button', class: 'btn secondary', id: 'cf-show', onclick: () => save(true) }, 'Show again (다시 보이기)') : null,
+          existing ? h('button', { type: 'button', class: 'btn danger outline', id: 'cf-delete', onclick: async () => {
+            const prev = Array.from(ov.childNodes);
+            const ok = await openDeleteForm(api, existing);
+            if (ok) { close(null); return; }
+            ov.hidden = false; document.body.classList.add('noscroll'); ov.replaceChildren(...prev);   // 취소하면 수정 창으로 돌아옴
+          } }, icon('trash', 18), 'Delete (삭제)') : null),
         existing ? h('p', { class: 'hint' }, inUse ? 'Hiding keeps past transactions; it only disappears from pick lists (숨겨도 지난 거래는 그대로이고, 선택 목록에서만 사라집니다).' : 'Hidden categories can be shown again from Settings (숨긴 항목은 설정에서 다시 보이게 할 수 있어요).') : null)));
     setTimeout(() => { try { nameIn.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }, 30);
   });
@@ -162,11 +355,13 @@ export function categoriesCard(api, icon) {
             h('button', { type: 'button', class: 'cf-row', 'data-acc': a.account_id, onclick: async () => { const r = await openCategoryForm(api, { account: a }); if (r) draw(); } },
               h('span', { class: 'cf-n' }, disp(a), sub(a) && sub(a) !== disp(a) ? h('small', null, sub(a)) : null),
               L.isActive(a) ? null : h('span', { class: 'set-pill off' }, 'Hidden (숨김)'),
-              h('span', { class: 'cf-go', 'aria-hidden': 'true' }, '›'))))),
+              h('span', { class: 'cf-go', 'aria-hidden': 'true' }, '›')),
+            PROTECTED_IDS.indexOf(String(a.account_id)) >= 0 ? null
+              : h('button', { type: 'button', class: 'cf-trash', 'data-del': a.account_id, 'aria-label': 'Delete (삭제): ' + disp(a), title: 'Delete (삭제)', onclick: async () => { const ok = await openDeleteForm(api, a); if (ok) draw(); } }, icon('trash', 20))))),
           h('button', { type: 'button', class: 'btn secondary cf-add', 'data-group': g, onclick: async () => { const r = await openCategoryForm(api, { type: tab, report_group: g }); if (r) draw(); } }, '+ ', 'Add (추가)'));
       }),
       h('label', { class: 'check cf-hidden' }, h('input', { type: 'checkbox', checked: showHidden, onchange: (e) => { showHidden = e.target.checked; draw(); } }), ' Show hidden (숨긴 항목 보기)'),
-      h('p', { class: 'set-note' }, 'Tap a name to rename or hide it. To change the order, use Reports → Reorder (이름을 누르면 바꾸거나 숨길 수 있어요. 순서는 보고서 → 순서 바꾸기에서).')].flat(Infinity).filter(Boolean));
+      h('p', { class: 'set-note' }, 'Tap a name to rename or hide it, or the trash can to delete it (이름을 누르면 바꾸거나 숨길 수 있고, 휴지통을 누르면 삭제해요). If it has transactions you choose where to move them (거래가 있으면 옮길 곳을 고릅니다). To change the order, use Reports → Reorder (순서는 보고서 → 순서 바꾸기에서).')].flat(Infinity).filter(Boolean));
   };
   draw();
   return el;

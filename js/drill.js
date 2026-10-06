@@ -7,6 +7,7 @@ import * as sync from './sync.js';
 import { icon } from './icons.js';
 import { layoutOf } from './layout.js';
 import * as receiptui from './receiptui.js';
+import * as RV from './receiptview.js';
 import { openRemember } from './rememberui.js';
 import * as X from './xfermatch.js';
 
@@ -126,6 +127,7 @@ function build() {
     }, keys.map((g) => h('optgroup', { label: L.GROUP_LABELS[g] || g }, groups.get(g).map((a) => h('option', { value: a.account_id, selected: String(a.account_id) === String(it.desc.categoryId) }, L.accLabel(a))))));
   };
 
+  const rcIds = RV.receiptTxnIds(state.data);
   rows.forEach((r) => {
     const it = r.it, t = it.txn, dsc = it.desc;
     const id = String(t.txn_id);
@@ -160,6 +162,7 @@ function build() {
           type: 'text', class: 'dp-memo', placeholder: 'Memo (메모)', value: t.memo || '', 'aria-label': 'Memo (메모)',
           onchange: (e) => edit(it, { memo: e.target.value }, false)
         }),
+        api.viewReceipt && rcIds.has(id) ? h('button', { type: 'button', class: 'rowbtn rc', 'aria-label': 'View receipt (영수증 보기)', title: 'View receipt (영수증 보기)', onclick: () => api.viewReceipt(t.txn_id) }, icon('camera', 20)) : null,
         h('button', { type: 'button', class: 'rowbtn', 'aria-label': 'Details (자세히)', title: 'Details (자세히)', onclick: () => api.openForm(t.txn_id) }, icon('edit', 20)),
         h('button', {
           type: 'button', class: 'rowbtn del', 'aria-label': 'Delete (삭제)', title: 'Delete (삭제)',

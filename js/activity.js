@@ -5,6 +5,7 @@ import { layoutOf } from './layout.js';
 import * as drill from './drill.js';
 import { incomeStatement } from './reports.js';
 import { bulkBar } from './bulk.js';
+import * as RV from './receiptview.js';
 
 // 여러 건 선택: Esc 로 끝내기 (데스크탑) — 문서에 한 번만 연결
 let escHandler = null;
@@ -345,6 +346,23 @@ export function render(api) {
     if (items.length > CAP) list.append(h('div', { class: 'note' }, 'Showing first ' + CAP + ' (처음 ' + CAP + '건만 표시)'));
   }
 
+  // 영수증 사진이 있는 거래에는 카메라 아이콘 (누르면 바로 영수증 보기)
+  var rcIds = null;   // eslint-disable-line no-var -- redraw() 가 먼저 불려도 안전하게 (끌어올려짐)
+  function rcSet() { return rcIds || (rcIds = (api.state.data && api.state.data.receipts) ? RV.receiptTxnIds(api.state.data) : new Set()); }
+  function rcBtn(id) {
+    if (!api.viewReceipt || !rcSet().has(String(id))) return null;
+    return h('span', {
+      class: 'row-rc', role: 'button', tabindex: bk.on ? '-1' : '0', 'data-rc': id, 'aria-label': 'View receipt (영수증 보기)', title: 'View receipt (영수증 보기)',
+      onclick: (e) => { if (bk.on) return; e.stopPropagation(); e.preventDefault(); api.viewReceipt(id); },
+      onkeydown: (e) => { if (!bk.on && (e.key === 'Enter' || e.key === ' ')) { e.stopPropagation(); e.preventDefault(); api.viewReceipt(id); } }
+    }, icon('camera', 16));
+  }
+
+  function rowTitle(text, id, cls) {
+    const rc = rcBtn(id);
+    return rc ? h('div', { class: (cls || 'row-title') + ' has-rc' }, h('span', { class: 'rt' }, text), rc) : h('div', { class: cls || 'row-title' }, text);
+  }
+
   function row(it, a, tl) {
     const t = it.txn, dsc = it.desc;
     const title = t.merchant || t.memo || dsc.categoryName;
@@ -360,7 +378,7 @@ export function render(api) {
     const el = h('button', { type: 'button', class: 'row ' + groupClass(it) + (bk.on ? ' bk-row' : ''), 'data-id': t.txn_id, onclick: (e) => tapRow(e, t.txn_id) },
       bk.on ? ckMark() : null,
       h('div', { class: 'row-main' },
-        h('div', { class: 'row-title' }, title),
+        rowTitle(title, t.txn_id),
         h('div', { class: 'row-sub' }, sub.filter(Boolean).join(' · '))),
       h('div', { class: 'row-right' },
         h('div', { class: 'row-amt ' + cls }, arrow + ' ' + fmt(amt)),
@@ -398,7 +416,7 @@ export function render(api) {
       lastDay = t.date;
       const catEl = h('span', { class: 'catchip ' + groupClass(it) + (todo ? ' todo' : '') }, todo ? 'Needs category (분류 필요)' : (dsc.categoryName || ''));
       const descCell = h('td', { class: 'desc' },
-        h('div', { class: 't' }, t.merchant || t.memo || dsc.categoryName),
+        rowTitle(t.merchant || t.memo || dsc.categoryName, t.txn_id, 't'),
         !wide ? h('div', { class: 'm' }, catEl) : null,
         t.merchant && t.memo ? h('div', { class: 'm' }, t.memo) : null,
         foreign ? h('div', { class: 'm' }, fmt(L.num(t.total_orig), t.currency)) : null);

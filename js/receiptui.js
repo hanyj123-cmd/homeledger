@@ -5,6 +5,8 @@ import * as R from './receipts.js';
 import * as sync from './sync.js';
 import * as auth from './auth.js';
 import { openRemember } from './rememberui.js';
+import * as RV from './receiptview.js';
+import { icon } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -78,13 +80,15 @@ export function openScan(api) {
     busy('read', img.preview);
     // 드라이브 보관은 읽기와 동시에 보냅니다.
     const stored = R.storeReceipt(img).catch((e) => ({ driveError: e.message || String(e) }));
+    const t0 = Date.now();
     try {
       const cats = api.state.data.accounts.filter((a) => L.isActive(a) && a.type === 'EXPENSE').map((a) => ({ id: String(a.account_id), name: a.name }));
       const res = await R.parseReceipt(img, cats);
       const parsed = res.parsed || {};
       const meta = {
         drive: null, driveError: '', driveDone: false, sha256: img.sha256 || '', model: res.model || '', mime: img.mime,
-        fileName: img.fileName, confidence: parsed.confidence, parsedJson: JSON.stringify(parsed)
+        fileName: img.fileName, confidence: parsed.confidence, parsedJson: JSON.stringify(parsed),
+        b64: img.base64, ms: Date.now() - t0, scanned: !!img.scanned    // b64: 저장하면 이 기기에도 넣어 둠 (바로 다시 볼 수 있게, 시트에는 안 들어감)
       };
       meta.stored = stored.then((r) => {
         meta.drive = r.drive || null; meta.driveError = r.driveError || ''; meta.driveDone = true;
@@ -210,7 +214,22 @@ function openReview(api, draft, close, show, shell) {
     };
 
     const rows = [];
-    if (draft.thumb) rows.push(h('img', { class: 'rc-thumb', src: draft.thumb, alt: 'receipt', width: 60, height: 80 }));
+    if (draft.thumb) {
+      // 썸네일을 누르면 방금 만든 스캔본을 크게 볼 수 있어요 (저장하기 전에 사진이 잘 나왔는지 확인)
+      const big = draft.meta && draft.meta.b64 ? { b64: draft.meta.b64, mime: draft.meta.mime } : null;
+      rows.push(big
+        ? h('button', { type: 'button', class: 'rc-thumb-btn', id: 'rc-thumb', 'aria-label': 'View scan (스캔본 크게 보기)', onclick: () => RV.openViewer(api, { title: 'Scan preview (스캔 미리보기)', sub: draft.merchant || '', local: big, fileName: draft.meta.fileName }) },
+          h('img', { class: 'rc-thumb', src: draft.thumb, alt: 'receipt', width: 60, height: 80 }))
+        : h('img', { class: 'rc-thumb', src: draft.thumb, alt: 'receipt', width: 60, height: 80 }));
+    } else if (editing && draft.meta && draft.meta.drive && draft.meta.drive.fileId) {
+      rows.push(h('button', { type: 'button', class: 'txf-receipt wide', id: 'rc-view', onclick: () => RV.openViewer(api, {
+        title: draft.merchant || 'Receipt (영수증)', sub: draft.date, fileId: draft.meta.drive.fileId, fileName: draft.meta.drive.fileName
+      }) }, icon('camera', 18), h('span', null, 'View receipt (영수증 보기)'), draft.meta.drive.fileName ? h('span', { class: 'txf-fn' }, draft.meta.drive.fileName) : null, icon('right', 16)));
+    }
+    if (!editing && draft.meta && typeof draft.meta.ms === 'number') {
+      const sec = (draft.meta.ms / 1000).toFixed(1);
+      rows.push(h('div', { class: 'hint rc-took', id: 'rc-took' }, 'Read in ' + sec + ' s' + (draft.meta.model ? ' · ' + draft.meta.model : '') + (draft.meta.scanned ? ' · scan (스캔본)' : '') + ' (읽는 데 ' + sec + '초). Too slow? Pick another model in Settings → AI model (느리면 설정 → AI 모델에서 바꿔 보세요).'));
+    }
     if (draft.meta && draft.meta.driveError) rows.push(h('div', { class: 'note' }, 'Photo was not saved to Drive (사진은 드라이브에 저장되지 않았습니다): ' + draft.meta.driveError));
     (draft.warnings || []).forEach((w) => rows.push(h('div', { class: 'card warn-card rc-warn' }, '⚠ ' + w)));
     if (draft.notes) rows.push(h('div', { class: 'note' }, draft.notes));
@@ -282,6 +301,7 @@ function openReview(api, draft, close, show, shell) {
       const order = ['Receipts', 'LineItems', 'Postings', 'Transactions'];
       if (res.receipt) puts.Receipts = [res.receipt];
       await sync.saveBatch(puts, order);
+      if (res.receipt && res.receipt.drive_file_id && draft.meta && draft.meta.b64) { try { await RV.cachePut(res.receipt.drive_file_id, draft.meta.mime, draft.meta.b64); } catch (e) { /* 못 넣어도 저장은 완료 */ } }
       if (draft.fromId) { try { localStorage.setItem('hl_last_from', draft.fromId); } catch (e) { /* ignore */ } }
       if (res.txn.date && L.monthOf(res.txn.date) !== api.state.month && !api.state.query) api.state.month = L.monthOf(res.txn.date);
       close();

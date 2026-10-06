@@ -11,7 +11,7 @@ export const CONFIG = {
   SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines', 'Receipts', 'LineItems', 'Budgets'],
   AUTO_SYNC_MS: 60000,
   RECEIPT_API_URL: 'https://script.google.com/macros/s/AKfycbzMiItzeZw23yPNth8Fk7khP3DP012RoMIxHBrVFvyxc2kwrjHttlSEePdLWf9diNrv/exec',
-  APP_VERSION: '0.14.0'
+  APP_VERSION: '0.15.0'
 };
 
 // 각 시트의 첫 번째 열 = 행의 고유 키

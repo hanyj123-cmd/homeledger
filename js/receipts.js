@@ -3,6 +3,9 @@
 import { CONFIG } from './config.js';
 import * as L from './ledger.js';
 import { getToken } from './auth.js';
+import * as prefs from './prefs.js';
+import * as scanimg from './scanimg.js';
+import * as models from './models.js';
 
 export const DEFAULT_RATES = { HST_ON: 0.13, GST: 0.05, HST_ATL: 0.15, GST_QST: 0.14975, ZERO: 0, EXEMPT: 0, NONE: 0 };
 export const TAX_OPTIONS = ['HST_ON', 'GST', 'HST_ATL', 'GST_QST', 'ZERO', 'EXEMPT', 'NONE'];
@@ -44,29 +47,41 @@ async function drawToJpeg(source, w, h, maxDim, quality) {
   return blob;
 }
 
-// 큰 사진은 가로/세로 1600px 이하 JPEG 로 줄여서 보냅니다. (업로드가 빠르고 인식에는 충분)
-export async function prepareImage(file) {
+// 사진 준비: 기본은 "스캔본"으로 보정합니다 (가장자리 자르기 · 그림자 펴기 · 글씨 진하게 · 1800px 이하 JPEG).
+// 보정한 사진을 드라이브에 저장하고 AI 에도 같은 사진을 보내서, 올리는 양이 줄고 글씨도 더 잘 읽힙니다.
+// 보정이 안 되는 환경이거나 "원본" 설정이면 예전처럼 크기만 줄입니다.
+export async function prepareImage(file, mode) {
   const type = String(file.type || '').toLowerCase();
   if (type === 'application/pdf') {
     if (file.size > 6 * 1024 * 1024) throw new Error('PDF 가 너무 큽니다 (6MB 이하).');
     const base64 = await blobToBase64(file);
-    return { base64, mime: 'application/pdf', fileName: file.name || 'receipt.pdf', thumb: '', sha256: await sha256OfBase64(base64) };
+    return { base64, mime: 'application/pdf', fileName: file.name || 'receipt.pdf', thumb: '', sha256: await sha256OfBase64(base64), scanned: false };
   }
+  const want = mode || prefs.scanMode();
   try {
     const bmp = await createImageBitmap(file);
-    const blob = await drawToJpeg(bmp, bmp.width, bmp.height, MAX_DIM, 0.82);
-    const thumbBlob = await drawToJpeg(bmp, bmp.width, bmp.height, 240, 0.6);
+    let blob = null, thumbBlob = null, scanned = false, cropped = false;
+    if (want !== 'orig') {
+      try {
+        const r = await scanimg.scanBlob(bmp, bmp.width, bmp.height, { mode: want, maxDim: MAX_DIM, quality: 0.8, thumb: 240 });
+        blob = r.blob; thumbBlob = r.thumbBlob; scanned = true; cropped = r.cropped;
+      } catch (e) { blob = null; }   // 보정 실패 → 아래 일반 방식
+    }
+    if (!blob) {
+      blob = await drawToJpeg(bmp, bmp.width, bmp.height, MAX_DIM, 0.82);
+      thumbBlob = await drawToJpeg(bmp, bmp.width, bmp.height, 240, 0.6);
+    }
     if (bmp.close) bmp.close();
     const [base64, thumb] = await Promise.all([blobToBase64(blob), blobToBase64(thumbBlob)]);
     return {
-      base64, mime: 'image/jpeg', fileName: (file.name || 'receipt').replace(/\.[^.]+$/, '') + '.jpg',
-      thumb: 'data:image/jpeg;base64,' + thumb, sha256: await sha256OfBase64(base64)
+      base64, mime: 'image/jpeg', fileName: (file.name || 'receipt').replace(/\.[^.]+$/, '') + (scanned ? '-scan' : '') + '.jpg',
+      thumb: 'data:image/jpeg;base64,' + thumb, sha256: await sha256OfBase64(base64), scanned, cropped
     };
   } catch (e) {
     // HEIC 등 브라우저가 못 여는 형식은 원본 그대로 (서버가 지원)
     if (file.size > 6 * 1024 * 1024) throw new Error('이 사진 형식은 크기를 줄일 수 없습니다. 사진 앱에서 JPEG 로 저장해 다시 올려 주세요.');
     const base64 = await blobToBase64(file);
-    return { base64, mime: type || 'image/jpeg', fileName: file.name || 'receipt', thumb: '', sha256: await sha256OfBase64(base64) };
+    return { base64, mime: type || 'image/jpeg', fileName: file.name || 'receipt', thumb: '', sha256: await sha256OfBase64(base64), scanned: false };
   }
 }
 
@@ -103,7 +118,7 @@ export function ping() { return callApi({ action: 'ping' }); }
 
 // 읽기와 드라이브 보관을 따로(동시에) 보내서, 보관 시간이 읽는 시간에 더해지지 않게 합니다.
 export function parseReceipt(img, categories) {
-  return callApi({ action: 'parseReceipt', image: img.base64, mime: img.mime, categories, save: false });
+  return callApi(Object.assign({ action: 'parseReceipt', image: img.base64, mime: img.mime, categories, save: false }, models.payload('receipt')));
 }
 
 export function storeReceipt(img) {
