@@ -177,17 +177,26 @@ export function projectMonths(ctx, n, opts) {
   const incBase = avg(hist.slice(-3).map((s) => s.income));
   const catBase = new Map();
   hist.slice(-3).forEach((s) => s.expenseGroups.forEach((g) => g.lines.forEach((l) => catBase.set(l.id, (catBase.get(l.id) || 0) + l.amount / Math.min(3, hist.length)))));
+  // 수입도 카테고리별 평균 (직접 입력한 계획이 있을 때 그 카테고리만 바꾸기 위해)
+  const incCat = new Map();
+  hist.slice(-3).forEach((s) => s.incomeLines.forEach((l) => incCat.set(l.id, (incCat.get(l.id) || 0) + l.amount / Math.min(3, hist.length))));
+  const plan = (opts && opts.plan && opts.plan.cells) || {};
+  const typeOf = (id) => { const a = accMap.get(String(id)); return a ? a.type : ''; };
   const out = [];
   let cash = ctx.liquid || 0;
   for (let i = 1; i <= n; i++) {
     const m = L.shiftMonth(ym, i);
     const bmap = B.budgetMap(budgets, m);
+    const pc = plan[m] || {};
+    const pids = Object.keys(pc);
     let exp = 0;
     const ids = new Set(Array.from(catBase.keys()).concat(Array.from(bmap.keys())));
-    ids.forEach((id) => { exp += bmap.has(id) ? bmap.get(id) : (catBase.get(id) || 0) * (1 + growth * i / 12); });
-    const inc = incBase;
+    pids.forEach((id) => { if (typeOf(id) === 'EXPENSE') ids.add(String(id)); });
+    ids.forEach((id) => { exp += pc[id] !== undefined && typeOf(id) === 'EXPENSE' ? Number(pc[id]) : bmap.has(id) ? bmap.get(id) : (catBase.get(id) || 0) * (1 + growth * i / 12); });
+    let inc = incBase;
+    pids.forEach((id) => { if (typeOf(id) === 'INCOME') inc += Number(pc[id]) - (incCat.get(String(id)) || 0); });
     cash += inc - exp;
-    out.push({ ym: m, income: r2(inc), expense: r2(exp), net: r2(inc - exp), cash: r2(cash), budgeted: bmap.size > 0 });
+    out.push({ ym: m, income: r2(inc), expense: r2(exp), net: r2(inc - exp), cash: r2(cash), budgeted: bmap.size > 0, planned: pids.length > 0 });
   }
   return out;
 }

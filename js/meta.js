@@ -13,7 +13,8 @@ export const KEYS_META = {
   users: 'meta.users',        // { 'email@x.com': 'Ms Kim' }
   plan: 'meta.plan',          // {extra, strategy, growth, horizon}
   ai: 'meta.ai',              // {enabled}
-  gemini: 'meta.gemini'       // {receipt:'모델', ai:'모델'} ('' = 자동)
+  gemini: 'meta.gemini',      // {receipt:'모델', ai:'모델'} ('' = 자동)
+  fcplan: 'meta.fcplan'       // { cells: { 'YYYY-MM': { 계정id: 금액 } } } 올해 남은 달 상향식 예측
 };
 export const NOTE_PREFIX = 'note.';
 const clone = (v) => (v === undefined ? v : JSON.parse(JSON.stringify(v)));

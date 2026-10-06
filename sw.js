@@ -80,6 +80,7 @@ const PRECACHE = [
   './js/bulk.js',
   './js/xfermatch.js',
   './js/paybundle.js',
+  './js/yearplan.js',
   './js/scanimg.js',
   './js/models.js',
   './js/receiptview.js',

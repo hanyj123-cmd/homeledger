@@ -2339,3 +2339,32 @@ input[type="month"]::-webkit-date-and-time-value { text-align: left; min-height:
   .rc-item-top { grid-template-columns: minmax(0, 1fr) 44px; }
   .rc-item-top .rc-name { grid-column: 1 / -1; }
 }
+
+/* v0.20 — 올해 남은 달 상향식 입력 (pl-bu) · 내년 예산 기준 칩/배너 */
+.pl-bu .pl-stats { grid-template-columns: 1fr; }
+@media (min-width: 700px) { .pl-bu .pl-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.pl-bu-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.pl-bu-mline { margin: 10px 2px 4px; font-size: 0.88rem; color: var(--ink-2); line-height: 1.5; }
+.pl-bu-list { margin-top: 6px; }
+.pl-bu-gh { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin: 16px 2px 6px; font-weight: 700; color: var(--ink-2); font-size: 0.92rem; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.pl-bu-row { display: grid; grid-template-columns: minmax(0, 1fr) 124px; column-gap: 10px; row-gap: 2px; align-items: center; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+.pl-bu-nm { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.pl-bu-nm .ko { color: var(--muted); font-weight: 400; font-size: 0.82rem; }
+.pl-bu-in { width: 100%; min-height: 44px; text-align: right; box-sizing: border-box; }
+.pl-bu-sub { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 0.78rem; color: var(--muted); }
+.pl-bu-act { min-height: 44px; padding: 0 10px; border: 0; background: transparent; color: var(--green-ink); font-weight: 700; font-size: 0.8rem; cursor: pointer; border-radius: 10px; }
+.pl-bu-act[hidden] { display: none; }
+.pl-bu-addrow { display: block; margin-top: 14px; }
+.pl-bu-addrow select { width: 100%; min-height: 44px; }
+.pl-bu-save { margin-top: 12px; }
+.pl-bu-dirty { color: var(--out); font-size: 0.82rem; font-weight: 600; flex: 1 1 100%; }
+.pl-bu-dirty:empty { display: none; }
+.pl-basis { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+.pl-yb { background: var(--tint); border-radius: 12px; padding: 10px 12px; margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.pl-yb[hidden] { display: none; }
+.pl-yb-t { font-weight: 700; font-size: 0.82rem; color: var(--green-ink); }
+.pl-yb-r { font-size: 0.9rem; line-height: 1.5; }
+.pl-link { align-self: flex-start; min-height: 44px; padding: 0 4px; border: 0; background: transparent; color: var(--green-ink); font-weight: 700; cursor: pointer; text-align: left; }
+.pl-bu-sub { row-gap: 0; }
+.pl-bu-act { margin: -6px 0; }
+.pl-bu-row { padding: 6px 2px; }

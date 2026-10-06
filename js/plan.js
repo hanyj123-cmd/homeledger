@@ -6,6 +6,7 @@ import * as M from './meta.js';
 import * as V from './valuation.js';
 import * as I from './insights.js';
 import * as R from './reports.js';
+import * as YP from './yearplan.js';
 import * as ai from './ai.js';
 import { lineChart, compact } from './charts.js';
 import { icon } from './icons.js';
@@ -16,7 +17,8 @@ let tab = 'fc';
 const S = {
   growthDraft: null,
   fc: { scope: 'all', cut: 10, inc: 0, cutText: '', incText: '', sel: null },
-  ny: { start: null, scope: 'next12', incl: new Map(), edits: new Map(), month: '', confirming: false, done: null },
+  ny: { start: null, scope: 'next12', incl: new Map(), edits: new Map(), month: '', confirming: false, done: null, basis: 'year' },
+  bu: { sel: null, edits: new Map(), added: new Set() },
   debt: { strategy: null, includeMortgage: false, extraDraft: null, target: '24' }
 };
 export const setTab = (t) => { if (t === 'fc' || t === 'ny' || t === 'debt') tab = t; };
@@ -121,7 +123,15 @@ export function render(api) {
   const meta = api.meta();
   const ctx = api.analysis();
   const today = api.today;
-  const fc = ctx.fc;
+  // 올해 남은 달을 내가 직접 입력해 두었으면(상향식) 이번 달 예상도 그 입력을 따릅니다
+  const savedPlan = YP.readPlan(api.data.settings);
+  let fc = ctx.fc;
+  if (L.monthOf(today) === state.month && !ctx.fc.done && savedPlan.cells[state.month] && Object.keys(savedPlan.cells[state.month]).length) {
+    const g0 = Number(meta.plan.growth);
+    const ol0 = YP.yearOutlook({ items: api.items, accMap: api.accMap, budgets: api.data.budgets || [], plan: savedPlan, today, growth: Number.isFinite(g0) ? g0 : 3 });
+    const t0 = ol0.monthTotals[state.month];
+    if (t0) fc = Object.assign({}, ctx.fc, { projExpense: t0.expense, projIncome: t0.income, projNet: r2(t0.income - t0.expense), remaining: r2(Math.max(0, t0.expense - ctx.fc.actualExpense)) });
+  }
   const inProg = L.monthOf(today) === state.month && !fc.done;
   // 이번 달이 한창 진행 중이면 "지난 3개월(완료된 달)" 로 예측하고, 이번 달 남은 몫은 현금 시작점에 더함
   const pItems = inProg ? api.items.filter((it) => L.monthOf(it.txn.date) !== state.month) : api.items;
@@ -224,6 +234,139 @@ export function render(api) {
         saveBtn));
   }
 
+  // ───────────────────────────────────── 올해 남은 달 · 상향식 ─────────────────────────────────────
+  // 카테고리 × 월 로 직접 입력 → 올해 연말 예상. (yearplan.js 가 계산, 여기서는 화면만)
+  function buildBu() {
+    const card = h('div', { class: 'card pl-bu', id: 'pl-bu' });
+    const curYm = L.monthOf(today);
+    const sel = () => (S.bu.sel && S.bu.sel > curYm && S.bu.sel.slice(0, 4) === curYm.slice(0, 4) ? S.bu.sel : curYm);
+    const planNow = () => YP.applyEdits(savedPlan, S.bu.edits);
+    const outlook = () => YP.yearOutlook({ items: api.items, accMap: api.accMap, budgets: api.data.budgets || [], plan: planNow(), today, growth: curGrowth(), extraIds: S.bu.added });
+    let ol = outlook();
+    const refs = { tiles: {}, mline: null, rows: new Map(), grp: new Map(), save: null, dirty: null, clear: null };
+    const dirtyNow = () => JSON.stringify(planNow().cells) !== JSON.stringify(savedPlan.cells);
+    const hasAnyPlan = () => Object.keys(planNow().cells).length > 0;
+
+    const tile = (key, lab) => {
+      const v = h('div', { class: 'pl-stat-v', id: 'pl-bu-' + key }), sub = h('div', { class: 'pl-stat-s', id: 'pl-bu-' + key + '-s' });
+      refs.tiles[key] = { v, sub };
+      return h('div', { class: 'pl-stat' }, h('div', { class: 'pl-stat-l' }, lab), v, sub);
+    };
+    function paintTiles() {
+      const t = refs.tiles;
+      t.inc.v.textContent = m0(ol.yearIncome);
+      t.inc.sub.textContent = 'so far (지금까지) ' + m0(ol.soFarIncome) + ' + rest (남은 예상) ' + m0(ol.yearIncome - ol.soFarIncome);
+      t.exp.v.textContent = m0(ol.yearExpense);
+      t.exp.sub.textContent = 'so far (지금까지) ' + m0(ol.soFarExpense) + ' + rest (남은 예상) ' + m0(ol.yearExpense - ol.soFarExpense);
+      t.net.v.textContent = (ol.yearNet < 0 ? '−' : '') + m0(Math.abs(ol.yearNet)).replace('−', '');
+      t.net.sub.replaceChildren(arrow(ol.yearNet, true, ol.yearNet >= 0 ? 'surplus (흑자)' : 'deficit (적자)'));
+    }
+    function paintMonthLine() {
+      const m = sel(), t = ol.monthTotals[m];
+      refs.mline.replaceChildren(h('b', null, L.monthLabel(m)), ': income (수입) ' + m0(t.income) + ' · spending (지출) ' + m0(t.expense) + ' · ', arrow(t.net, true));
+    }
+    function paintDirty() {
+      const d = dirtyNow();
+      refs.save.disabled = !d;
+      refs.dirty.textContent = d ? 'Unsaved changes (저장 안 된 변경이 있어요)' : '';
+      refs.clear.hidden = !hasAnyPlan();
+    }
+    function lineOf(id) { return ol.lines.find((l) => l.id === id); }
+    function paintRow(l, refsRow) {
+      const m = sel(), c = l.cells[m];
+      const isCur = m === curYm;
+      const bits = ['auto (자동) ' + m0(c.auto)];
+      if (isCur && l.curActual) bits.push('so far (지금까지) ' + m0(l.curActual));
+      refsRow.sub.textContent = bits.join(' · ');
+      refsRow.year.textContent = 'Year (올해) ' + m0(l.total);
+      refsRow.reset.hidden = refsRow.input.value.trim() === '';
+      refsRow.input.placeholder = String(Math.round(c.auto));
+    }
+    function refresh() {
+      ol = outlook();
+      paintTiles(); paintMonthLine(); paintDirty();
+      refs.rows.forEach((r, id) => { const l = lineOf(id); if (l) paintRow(l, r); });
+      refs.grp.forEach((el, g) => { const m = sel(); el.textContent = m0(sum(ol.lines.filter((l) => l.group === g).map((l) => l.cells[m].value))); });
+    }
+    const valueOf = (m, id) => {
+      const k = YP.cellKey(m, id);
+      if (S.bu.edits.has(k)) return S.bu.edits.get(k);
+      const v = savedPlan.cells[m] && savedPlan.cells[m][id];
+      return v === undefined ? '' : String(v);
+    };
+    function rowEl(l) {
+      const m = sel();
+      const key = YP.cellKey(m, l.id);
+      const input = h('input', { type: 'text', class: 'pl-bu-in', inputmode: 'decimal', autocomplete: 'off', 'data-id': l.id, 'aria-label': (l.name || l.id) + ' — ' + L.monthLabel(m) + ' (금액)', value: valueOf(m, l.id), placeholder: '',
+        oninput: () => { S.bu.edits.set(key, input.value); refresh(); } });
+      const sub = h('span', { class: 'pl-bu-auto' }), year = h('span', { class: 'pl-bu-year' });
+      const reset = h('button', { type: 'button', class: 'pl-bu-act', 'data-act': 'reset', onclick: () => { S.bu.edits.set(key, ''); input.value = ''; refresh(); } }, 'Auto (자동으로)');
+      const copy = h('button', { type: 'button', class: 'pl-bu-act', 'data-act': 'copy', onclick: () => {
+        const v = lineOf(l.id).cells[sel()].value;
+        ol.months.filter((x) => x > sel()).forEach((x) => S.bu.edits.set(YP.cellKey(x, l.id), String(v)));
+        toast('Copied to the later months (남은 달에 같은 금액을 넣었어요)'); refresh();
+      } }, 'Same for rest (남은 달 동일)');
+      const r = { input, sub, year, reset };
+      refs.rows.set(l.id, r);
+      return h('div', { class: 'pl-bu-row', 'data-id': l.id },
+        h('div', { class: 'pl-bu-nm' }, l.name, l.name_ko && l.name_ko !== l.name ? h('span', { class: 'ko' }, ' ' + l.name_ko) : null), input,
+        h('div', { class: 'pl-bu-sub' }, sub, year, reset, l.type === 'EXPENSE' || l.type === 'INCOME' ? copy : null));
+    }
+    const toast = api.toast;
+
+    async function save() {
+      const next = planNow();
+      await api.saveSettings(YP.planRow(api.data.settings, next, L.nowIso(), today));
+      S.bu.edits = new Map();
+      toast('Forecast saved (예측 저장됨)');
+    }
+    function clearAll() {
+      const cur = planNow();
+      Object.keys(cur.cells).forEach((m) => Object.keys(cur.cells[m]).forEach((id) => S.bu.edits.set(YP.cellKey(m, id), '')));
+      draw();
+    }
+
+    function draw() {
+      ol = outlook();
+      refs.rows = new Map(); refs.grp = new Map();
+      const m = sel();
+      const chips = h('div', { class: 'pl-chips pl-bu-chips', role: 'group', 'aria-label': 'Month (월)' }, ol.months.map((x) => chip(shortMon(x) + (x === curYm ? ' · now (이번 달)' : ''), x === m, () => { S.bu.sel = x; draw(); }, 'pl-bu-m-' + x.slice(5), 'pl-bu-chip')));
+      refs.mline = h('div', { class: 'pl-bu-mline', id: 'pl-bu-mline' });
+      const body = [];
+      const groups = [];
+      ol.lines.forEach((l) => { if (groups.indexOf(l.group) < 0) groups.push(l.group); });
+      groups.forEach((g) => {
+        const gt = h('b', { class: 'pl-bu-gt' });
+        refs.grp.set(g, gt);
+        body.push(h('div', { class: 'pl-bu-gh', 'data-group': g }, h('span', null, g === '수입' ? 'Income (수입)' : (L.GROUP_LABELS[g] || g)), gt));
+        ol.lines.filter((l) => l.group === g).forEach((l) => body.push(rowEl(l)));
+      });
+      if (!ol.lines.length) body.push(h('div', { class: 'note' }, 'No records yet (아직 기록이 없어요). 아래에서 카테고리를 추가해 직접 입력할 수도 있어요.'));
+      // 카테고리 추가
+      const shown = new Set(ol.lines.map((l) => l.id));
+      const addable = api.accounts.filter((a) => (a.type === 'EXPENSE' || a.type === 'INCOME') && L.isActive(a) && !shown.has(String(a.account_id)));
+      const addSel = h('select', { id: 'pl-bu-add', 'aria-label': 'Add a category (카테고리 추가)', onchange: (e) => { if (e.target.value) { S.bu.added.add(e.target.value); draw(); } } },
+        [h('option', { value: '' }, '+ Add a category (카테고리 추가)')].concat(['INCOME', 'EXPENSE'].map((ty) => h('optgroup', { label: ty === 'INCOME' ? 'Income (수입)' : 'Spending (지출)' }, addable.filter((a) => a.type === ty).map((a) => h('option', { value: a.account_id }, L.accLabel(a)))))));
+      refs.save = h('button', { type: 'button', class: 'btn', id: 'pl-bu-save', onclick: save }, icon('check', 18), 'Save forecast (예측 저장)');
+      refs.dirty = h('span', { class: 'pl-bu-dirty', id: 'pl-bu-dirty' });
+      refs.clear = h('button', { type: 'button', class: 'btn secondary sm', id: 'pl-bu-clear', onclick: clearAll }, 'Clear my entries (내 입력 지우기)');
+      card.replaceChildren(
+        heading('Rest of this year — bottom-up', '올해 남은 달 · 카테고리별 입력'),
+        h('div', { class: 'note' }, 'Type what you expect for each category and month. Leave a box empty to keep the automatic number. The year-end total below becomes the base for the Next-year budget (카테고리마다 남은 달의 예상 금액을 넣으세요. 비워 두면 자동 계산이고, 아래 연말 합계가 내년 예산의 기준이 돼요).'),
+        h('div', { class: 'pl-stats' }, tile('inc', 'Year income (올해 예상 수입)'), tile('exp', 'Year spending (올해 예상 지출)'), tile('net', 'Left over (올해 남는 돈)')),
+        h('div', { class: 'lbl pl-gap' }, 'Month to edit (입력할 달)'), chips, refs.mline,
+        h('div', { class: 'pl-bu-list', id: 'pl-bu-list' }, body),
+        h('label', { class: 'field pl-bu-addrow' }, addSel),
+        h('div', { class: 'pl-apply-row pl-bu-save' }, refs.dirty, refs.clear, refs.save),
+        h('div', { class: 'note' }, 'The charts and table below use the saved forecast (아래 그래프와 표는 저장된 예측을 써요).'));
+      ol.lines.forEach((l) => { const r = refs.rows.get(l.id); if (r) paintRow(l, r); });
+      paintTiles(); paintMonthLine(); paintDirty();
+      refs.grp.forEach((el, g) => { el.textContent = m0(sum(ol.lines.filter((l) => l.group === g).map((l) => l.cells[m].value))); });
+    }
+    draw();
+    return card;
+  }
+
   // ───────────────────────────────────── 1) Forecast ─────────────────────────────────────
   function buildFc() {
     const frag = h('div', { class: 'pl-grid pl-fc' });
@@ -232,7 +375,7 @@ export function render(api) {
     const chartBox = h('div', { class: 'pl-chartbox' });
     const side = h('div', { class: 'pl-side' });
     const tableBox = h('div', { class: 'pl-tablebox' });
-    col.append(top, chartBox, tableBox);
+    col.append(top, buildBu(), chartBox, tableBox);
     frag.append(col, side);
     let model = null;
 
@@ -255,12 +398,12 @@ export function render(api) {
           h('div', { class: 'bar' }, h('i', { class: 'bar-fill ' + (fc.projNet < 0 ? 'over' : 'ok'), style: 'width:' + Math.round(spentPct) + '%' }), h('b', { class: 'bar-pace', style: 'left:' + Math.round(fc.frac * 100) + '%' })),
           h('div', { class: 'note' }, 'Spent so far (지금까지 지출) ' + m0(fc.actualExpense) + ' · expected more (앞으로 예상) ' + m0(fc.remaining)))),
       growthCtl(() => drawModel(), 'pl-'),
-      h('div', { class: 'note' }, 'Based on the last 3 full months. Months with a budget use the budget (최근 3개월 평균 기준, 예산이 있는 달은 예산을 씁니다).'));
+      h('div', { class: 'note' }, 'Based on the last 3 full months. Months with a budget use the budget, and the numbers you type in the box below come first (최근 3개월 평균 기준, 예산이 있는 달은 예산, 아래 상향식 입력이 있으면 그것이 우선이에요).'));
 
     // 앞으로 12개월 모델
     function makeModel() {
       const growth = curGrowth();
-      const rows = I.projectMonths(pctx, 12, { growth });
+      const rows = I.projectMonths(pctx, 12, { growth, plan: savedPlan });
       const cats = catProjection(pctx, growth, 12);
       const pastMonths = I.months(state.month, 6).filter((m) => !(inProg && m === state.month));
       const pts = [];
@@ -272,7 +415,7 @@ export function render(api) {
       if (inProg) pts.push({ ym: state.month, actual: false, partial: true, income: fc.projIncome, expense: fc.projExpense, net: fc.projNet, cash: startCash, budgeted: false });
       else if (pts.length) pts[pts.length - 1].cash = ctx.pos.liquid;
       const ff = pts.length - (inProg ? 1 : 0);   // 첫 예상 점의 위치 (이번 달이 진행 중이면 이번 달부터 예상)
-      rows.forEach((r) => pts.push({ ym: r.ym, actual: false, income: r.income, expense: r.expense, net: r.net, cash: r.cash, budgeted: r.budgeted }));
+      rows.forEach((r) => pts.push({ ym: r.ym, actual: false, income: r.income, expense: r.expense, net: r.net, cash: r.cash, budgeted: r.budgeted, planned: r.planned }));
       const noData = rows.every((r) => r.income === 0 && r.expense === 0);
       return { growth, rows, cats, pts, ff: ff > 0 ? ff : null, noData };
     }
@@ -301,7 +444,7 @@ export function render(api) {
     function detail(i) {
       const p = model.pts[i];
       if (!p) return '';
-      const kids = [h('b', null, L.monthLabel(p.ym)), p.actual ? ' (actual 실제)' : p.partial ? ' (this month, expected 이번 달 예상)' : ' (forecast 예상)', p.budgeted ? ' ' : null, p.budgeted ? badge('budget', 'good') : null, ': '];
+      const kids = [h('b', null, L.monthLabel(p.ym)), p.actual ? ' (actual 실제)' : p.partial ? ' (this month, expected 이번 달 예상)' : ' (forecast 예상)', p.budgeted ? ' ' : null, p.budgeted ? badge('budget', 'good') : null, p.planned ? ' ' : null, p.planned ? badge('plan', 'info') : null, ': '];
       if (p.income === null) kids.push('no records (기록 없음)');
       else kids.push('income (수입) ', m0(p.income), ' · spending (지출) ', m0(p.expense), ' · net (순수입) ', arrow(p.net, true), p.cash !== null ? ' · cash (현금) ' + m0(p.cash) : '');
       return kids;
@@ -340,14 +483,14 @@ export function render(api) {
       const head = heading('Month by month (월별)', '예상 수입·지출·현금');
       if (phone) {
         const list = h('div', { class: 'bg-list pl-mlist' }, model.rows.map((r) => h('div', { class: 'pl-mrow', 'data-ym': r.ym },
-          h('div', { class: 'pl-mrow-l' }, h('div', { class: 't' }, L.monthLabel(r.ym), ' ', r.budgeted ? badge('budget', 'good') : null, worst && r.ym === worst.ym && worst.net < 0 ? badge('tightest', 'warn') : null),
+          h('div', { class: 'pl-mrow-l' }, h('div', { class: 't' }, L.monthLabel(r.ym), ' ', r.budgeted ? badge('budget', 'good') : null, r.planned ? badge('plan', 'info') : null, worst && r.ym === worst.ym && worst.net < 0 ? badge('tightest', 'warn') : null),
             h('div', { class: 's' }, 'In ' + m0(r.income) + ' · Out ' + m0(r.expense) + ' · Cash ' + m0(r.cash))),
           h('div', { class: 'pl-mrow-r' }, arrow(r.net, true)))));
         tableBox.replaceChildren(h('div', { class: 'pl-tbl-wrap' }, head, list));
       } else {
         const tb = h('tbody');
         model.rows.forEach((r) => tb.append(h('tr', { class: 'line', 'data-ym': r.ym },
-          h('td', null, L.monthLabel(r.ym), ' ', r.budgeted ? badge('budget', 'good') : null, worst && r.ym === worst.ym && worst.net < 0 ? badge('tightest', 'warn') : null),
+          h('td', null, L.monthLabel(r.ym), ' ', r.budgeted ? badge('budget', 'good') : null, r.planned ? badge('plan', 'info') : null, worst && r.ym === worst.ym && worst.net < 0 ? badge('tightest', 'warn') : null),
           h('td', null, m0(r.income)), h('td', null, m0(r.expense)), h('td', null, arrow(r.net, true)), h('td', null, m0(r.cash)))));
         tableBox.replaceChildren(h('div', { class: 'pl-tbl-wrap' }, head, h('div', { class: 'tbl tbl-scroll' }, h('table', { class: 'pl-tbl', id: 'pl-fc-table' },
           h('thead', null, h('tr', null, h('th', null, 'Month ', h('span', { class: 'ko' }, '월')), h('th', null, 'Income ', h('span', { class: 'ko' }, '수입')), h('th', null, 'Spending ', h('span', { class: 'ko' }, '지출')), h('th', null, 'Net ', h('span', { class: 'ko' }, '순수입')), h('th', null, 'Cash ', h('span', { class: 'ko' }, '누적 현금')))), tb))));
@@ -441,7 +584,7 @@ export function render(api) {
     const budgets = api.data.budgets || [];
     const defStart = L.monthOf(today);
     const startYm = () => S.ny.start || defStart;
-    let sg = null, rows = [], groups = [], incAvg = 0, expAvg = 0;
+    let sg = null, rows = [], groups = [], incAvg = 0, expAvg = 0, yo = null, useYear = false;
     const scopeMonths = () => B.monthsFor(startYm(), S.ny.scope);
     const refs = { total: null, sum: null, grp: new Map(), apply: null, cnt: null };
 
@@ -451,7 +594,10 @@ export function render(api) {
 
     function calc() {
       const growth = curGrowth();
-      sg = I.suggestNextYear(api.items, api.accMap, basisYm, growth);
+      yo = YP.yearOutlook({ items: api.items, accMap: api.accMap, budgets, plan: savedPlan, today, growth });
+      const fromYear = S.ny.basis === 'year' ? YP.suggestFromYear(yo, growth) : null;
+      useYear = !!(fromYear && fromYear.map.size);
+      sg = useYear ? fromYear : I.suggestNextYear(api.items, api.accMap, basisYm, growth);
       const ms = scopeMonths();
       const bms = ms.map((m) => B.budgetMap(budgets, m));
       const lockN = new Map();
@@ -467,9 +613,14 @@ export function render(api) {
         rows.push({ id: String(id), name: a.name, name_ko: a.name_ko, group: a.report_group || '확인 필요', basis: v.basis, sugg: v.amount, rationale: v.rationale, volatile: v.volatile, trend: v.trend, months: v.months, existing, startBudget: cur[0], hasExisting: existing > 0, locked: nLock >= ms.length, lockedSome: nLock > 0 && nLock < ms.length });
       });
       groups = L.GROUP_ORDER.map((g) => ({ key: g, label: L.GROUP_LABELS[g] || g, rows: rows.filter((r) => r.group === g).sort((a, b) => b.sugg - a.sugg) })).filter((g) => g.rows.length);
-      const upto = ctx.series.filter((s) => s.ym <= basisYm).slice(-3).filter((s) => s.income > 0 || s.expense > 0);
-      incAvg = avg(upto.filter((s) => s.income > 0).map((s) => s.income));
-      expAvg = avg(upto.map((s) => s.expense));
+      if (useYear && yo.covered) {
+        incAvg = yo.yearIncome / yo.covered;
+        expAvg = yo.yearExpense / yo.covered;
+      } else {
+        const upto = ctx.series.filter((s) => s.ym <= basisYm).slice(-3).filter((s) => s.income > 0 || s.expense > 0);
+        incAvg = avg(upto.filter((s) => s.income > 0).map((s) => s.income));
+        expAvg = avg(upto.map((s) => s.expense));
+      }
     }
     const totals = () => {
       const total = sum(rows.map(effOf));
@@ -494,11 +645,11 @@ export function render(api) {
         heading('Budget vs income (예산 vs 수입)', '월 기준'),
         h('div', { class: 'pl-stats' },
           h('div', { class: 'pl-stat' }, h('div', { class: 'pl-stat-l' }, 'Budget total (예산 합계)'), h('div', { class: 'pl-stat-v', id: 'pl-ny-total' }, m0(t.total)), h('div', { class: 'pl-stat-s' }, expAvg > 0 ? h('span', null, arrow(t.total - expAvg, false), ' vs now (현재 평균 ' + m0(expAvg) + ')') : '')),
-          h('div', { class: 'pl-stat' }, h('div', { class: 'pl-stat-l' }, 'Avg income (최근 3개월 평균 수입)'), h('div', { class: 'pl-stat-v', id: 'pl-ny-inc' }, incAvg > 0 ? m0(incAvg) : '—')),
+          h('div', { class: 'pl-stat' }, h('div', { class: 'pl-stat-l' }, (useYear ? 'Avg income (올해 월평균 수입)' : 'Avg income (최근 3개월 평균 수입)')), h('div', { class: 'pl-stat-v', id: 'pl-ny-inc' }, incAvg > 0 ? m0(incAvg) : '—')),
           h('div', { class: 'pl-stat ' + tone }, h('div', { class: 'pl-stat-l' }, 'Expected savings (예상 저축)'), h('div', { class: 'pl-stat-v', id: 'pl-ny-save' }, t.pct === null ? '—' : (t.savings < 0 ? '−' : '') + m0(Math.abs(t.savings)).replace('−', '') + ' (' + Math.round(t.pct) + '%)'),
             t.pct === null ? null : h('div', { class: 'pl-stat-s' }, h('span', { class: 'chg ' + (tone === 'good' ? 'good' : tone === 'bad' ? 'bad' : '') }, h('span', { class: 'arw' }, t.savings >= 0 ? '▲' : '▼'), t.pct >= 20 ? 'on target (목표 달성)' : t.pct >= 8 ? 'a bit low (조금 낮아요)' : 'low (낮아요)')))),
         incAvg > 0 ? h('div', { class: 'bar', role: 'img', 'aria-label': Math.round(ratio) + '% of income' }, h('i', { class: 'bar-fill ' + st, style: 'width:' + clamp(ratio, 0, 100) + '%' })) : null,
-        h('div', { class: 'note' }, 'Based on ' + sg.span + ' months of records (최근 ' + sg.span + '개월 기록 기준). Unchecked rows count at their current budget or average (체크 해제한 항목은 현재 예산 또는 평균으로 계산). Small or new categories are left out (소액·신규 항목은 제외).'),
+        h('div', { class: 'note' }, (useYear ? 'Based on ' + sg.span + ' months of this year (올해 ' + sg.span + '개월 기준).' : 'Based on ' + sg.span + ' months of records (최근 ' + sg.span + '개월 기록 기준).')+ ' Unchecked rows count at their current budget or average (체크 해제한 항목은 현재 예산 또는 평균으로 계산). Small or new categories are left out (소액·신규 항목은 제외).'),
         sg.span < 6 ? h('div', { class: 'pl-warnline' }, icon('alert', 16), 'Short history — treat as rough (기록이 짧아서 대략적인 제안이에요).') : null);
       refs.cnt && (refs.cnt.textContent = t.count + ' selected');
       if (refs.apply) refs.apply.disabled = t.count === 0;
@@ -555,7 +706,7 @@ export function render(api) {
             const card = h('div', { class: 'pl-ncard ' + gc + (incl(r) ? '' : ' off'), 'data-acct': r.id },
               h('div', { class: 'pl-ncard-top' }, chk(r), h('div', { class: 'pl-ncard-name' }, h('div', { class: 't' }, r.name), h('div', { class: 'b' }, badges(r)))),
               h('div', { class: 'pl-ncard-nums' },
-                h('div', null, h('div', { class: 'l' }, 'Recent avg (최근 평균)'), h('div', { class: 'v' }, m0(r.basis))),
+                h('div', null, h('div', { class: 'l' }, avgLbl()), h('div', { class: 'v' }, m0(r.basis))),
                 h('div', null, h('div', { class: 'l' }, 'Suggested (제안액)'), amtInput(r)),
                 h('div', null, h('div', { class: 'l' }, 'Current (현재 예산)'), h('div', { class: 'v' }, curTxt(r)))),
               why(r));
@@ -577,7 +728,7 @@ export function render(api) {
             tb.append(tr);
           });
           out.push(head, h('div', { class: 'tbl tbl-scroll' }, h('table', { class: 'pl-tbl pl-ntbl' },
-            h('thead', null, h('tr', null, h('th', { class: 'c' }), h('th', { class: 'nm' }, 'Category ', h('span', { class: 'ko' }, '카테고리')), h('th', { class: 'r' }, 'Recent avg ', h('span', { class: 'ko' }, '최근 평균')), h('th', { class: 'r' }, 'Suggested ', h('span', { class: 'ko' }, '제안액')),
+            h('thead', null, h('tr', null, h('th', { class: 'c' }), h('th', { class: 'nm' }, 'Category ', h('span', { class: 'ko' }, '카테고리')), h('th', { class: 'r' }, useYear ? 'This year avg ' : 'Recent avg ', h('span', { class: 'ko' }, useYear ? '올해 월평균' : '최근 평균')), h('th', { class: 'r' }, 'Suggested ', h('span', { class: 'ko' }, '제안액')),
               desktop ? h('th', { class: 'w' }, 'Why ', h('span', { class: 'ko' }, '근거')) : null, h('th', { class: 'r' }, 'Current ', h('span', { class: 'ko' }, '현재 예산')))), tb)));
         }
       });
@@ -669,7 +820,7 @@ export function render(api) {
       const base = L.monthOf(today);
       return [0, 1, 2, 3, 4, 5, 6].map((i) => { const m = L.shiftMonth(base, i); return h('option', { value: m, selected: m === startYm() }, L.monthLabel(m) + (i === 1 ? ' — next month (다음 달)' : i === 0 ? ' — this month (이번 달)' : '')); });
     }
-    function redo() { calc(); hideConfirm(); drawList(); drawSum(); }
+    function redo() { calc(); paintBasis(); hideConfirm(); drawList(); drawSum(); }
     const startSel = h('select', { id: 'pl-ny-start', 'aria-label': 'Start month (시작 달)', onchange: (e) => { S.ny.start = e.target.value; S.ny.done = null; S.ny.incl = new Map(); paintScope(); redo(); drawDone(); } }, monthOpts());
     const SCOPES = [['month', 'This month only', '이번 달만'], ['year', 'Rest of the year', '올해 남은 달'], ['next12', 'Next 12 months', '앞으로 12개월']];
     const scopeChips = h('div', { class: 'pl-chips pl-scopes', role: 'group', 'aria-label': 'Apply to (적용 범위)' });
@@ -684,12 +835,32 @@ export function render(api) {
     refs.apply = h('button', { type: 'button', class: 'btn', id: 'pl-ny-apply', onclick: showConfirm }, icon('check', 18), 'Apply (적용)');
     const applyRow = h('div', { class: 'pl-apply-row', id: 'pl-ny-applyrow' }, refs.cnt, h('button', { type: 'button', class: 'btn secondary sm', id: 'pl-ny-reset', onclick: () => { S.ny.edits = new Map(); S.ny.incl = new Map(); redo(); } }, 'Reset (초기화)'), refs.apply);
     dock.append(doneBox, confirmBox, applyRow);
+    const basisChips = h('div', { class: 'pl-chips pl-basis', role: 'group', 'aria-label': 'Based on (기준)' });
+    const basisNote = h('div', { class: 'note', id: 'pl-ny-basisnote' });
+    const yearBanner = h('div', { class: 'pl-yb', id: 'pl-ny-yearbanner' });
+    function paintBasis() {
+      const B2 = [['year', "This year's forecast", '올해 예상'], ['recent', 'Last 12 months', '최근 12개월']];
+      basisChips.replaceChildren(...B2.map(([k, en, ko]) => h('button', { type: 'button', class: 'pl-chip pl-chip2' + (S.ny.basis === k ? ' on' : ''), id: 'pl-ny-b-' + k, 'aria-pressed': String(S.ny.basis === k),
+        onclick: () => { S.ny.basis = k; S.ny.done = null; S.ny.incl = new Map(); S.ny.edits = new Map(); paintBasis(); redo(); drawDone(); } }, en, h('span', { class: 'ko' }, ko))));
+      basisNote.textContent = useYear
+        ? 'Each suggestion = this year\'s expected total (actual so far + your forecast for the rest) ÷ months, plus inflation (올해 실제 + 남은 달 예상을 합친 연말 합계 ÷ 개월 + 물가로 만든 제안이에요. 금액은 고칠 수 있어요).'
+        : (S.ny.basis === 'year' ? 'No year forecast to use yet, so the recent average is shown (올해 예상을 만들 기록이 아직 없어 최근 평균으로 보여줘요). ' : '') + 'Each suggestion is the recent average plus inflation, with the reason in plain words (최근 평균 + 물가로 만든 제안이에요. 금액은 고칠 수 있어요).';
+      if (useYear && yo) {
+        yearBanner.hidden = false;
+        yearBanner.replaceChildren(h('div', { class: 'pl-yb-t' }, 'This year\'s outlook (올해 예상)'),
+          h('div', { class: 'pl-yb-r' }, 'Income (수입) ', h('b', null, m0(yo.yearIncome)), ' · Spending (지출) ', h('b', null, m0(yo.yearExpense)), ' · ', arrow(yo.yearNet, true, yo.yearNet >= 0 ? 'left over (남음)' : 'short (부족)')),
+          h('button', { type: 'button', class: 'pl-link', id: 'pl-ny-togc', onclick: () => { const b = document.getElementById('pl-tab-fc'); if (b) b.click(); } }, 'Edit the forecast (예측 고치기) ›'));
+      } else { yearBanner.hidden = true; yearBanner.replaceChildren(); }
+    }
+    const avgLbl = () => (useYear ? 'This year avg (올해 월평균)' : 'Recent avg (최근 평균)');
     calc();
+    paintBasis();
     paintScope();
     top.append(
       h('div', { class: 'card pl-nyctl' },
         heading('Next-year budget (내년 예산)', '지난 기록으로 제안'),
-        h('div', { class: 'note' }, 'Each suggestion is the recent average plus inflation, with the reason in plain words. Edit any amount, then apply (최근 평균 + 물가로 만든 제안이에요. 이유가 함께 나오고 금액은 고칠 수 있어요).'),
+        h('div', { class: 'lbl' }, 'Based on (기준)'), basisChips, basisNote,
+        yearBanner,
         h('div', { class: 'pl-ctl-row' },
           h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Start month (시작 달)'), startSel),
           growthCtl(() => { S.ny.done = null; redo(); }, 'pl-ny-')),
