@@ -8,10 +8,10 @@ export const CONFIG = {
   OWNERS: ['Patrick', 'Ms Kim', 'Joint'],
   CLEARING_ID: '2900',   // Passthrough Clearing (전달 자금)
   OPENING_ID: '3010',    // Opening Balance Equity (기초 잔액 자본)
-  SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines', 'Receipts', 'LineItems'],
+  SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines', 'Receipts', 'LineItems', 'Budgets'],
   AUTO_SYNC_MS: 60000,
   RECEIPT_API_URL: 'https://script.google.com/macros/s/AKfycbzMiItzeZw23yPNth8Fk7khP3DP012RoMIxHBrVFvyxc2kwrjHttlSEePdLWf9diNrv/exec',
-  APP_VERSION: '0.8.0'
+  APP_VERSION: '0.9.0'
 };
 
 // 각 시트의 첫 번째 열 = 행의 고유 키
@@ -26,7 +26,8 @@ export const KEYS = {
   ImportProfiles: 'profile_id',
   StatementLines: 'stmt_line_id',
   Receipts: 'receipt_id',
-  LineItems: 'line_id'
+  LineItems: 'line_id',
+  Budgets: 'budget_id'
 };
 
 const TAIL = ['updated_at', 'deleted'];
@@ -56,5 +57,6 @@ export const HEADERS = {
     'parse_status', 'parse_model', 'parsed_json', 'confidence', 'error', 'uploaded_at'].concat(TAIL),
   LineItems: ['line_id', 'txn_id', 'line_no', 'item_name', 'item_name_raw', 'qty', 'unit_price',
     'line_amount', 'is_discount', 'tax_code', 'tax_amount', 'category_account_id',
-    'ai_confidence', 'user_confirmed'].concat(TAIL)
+    'ai_confidence', 'user_confirmed'].concat(TAIL),
+  Budgets: ['budget_id', 'type', 'vintage', 'year', 'month', 'account_id', 'amount_cad', 'rationale', 'locked'].concat(TAIL)
 };

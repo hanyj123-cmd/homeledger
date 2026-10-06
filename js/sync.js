@@ -40,11 +40,11 @@ export async function refreshStatus() {
 }
 
 export async function loadAll() {
-  const [accounts, taxCodes, settings, rules, fxRates, txns, postings, profiles, stmtLines, receipts, lineItems] = await Promise.all(
+  const [accounts, taxCodes, settings, rules, fxRates, txns, postings, profiles, stmtLines, receipts, lineItems, budgets] = await Promise.all(
     CONFIG.SYNC_SHEETS.map((s) => S.getAll(s))
   );
   accounts.sort((a, b) => num(a.sort_order) - num(b.sort_order));
-  return { accounts, taxCodes, settings, rules, fxRates, txns, postings, profiles, stmtLines, receipts, lineItems };
+  return { accounts, taxCodes, settings, rules, fxRates, txns, postings, profiles, stmtLines, receipts, lineItems, budgets };
 }
 
 async function pendingIds(sheet) {

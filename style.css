@@ -464,3 +464,20 @@ input[type="search"] { border-radius: 16px; }
 
 .masthead .stat .in { color: #146003; }
 @media (prefers-color-scheme: dark) { .masthead .stat .in { color: var(--in); } }
+
+/* ───── 예산 ───── */
+.seg.three-seg { grid-template-columns: repeat(3, 1fr); }
+.seg.three-seg button { font-size: 0.74rem; }
+.bg-actions { margin-top: 12px; }
+.bg-actions .btn { font-size: 0.8rem; }
+.bar { position: relative; height: 10px; border-radius: 999px; background: var(--line); overflow: visible; margin: 8px 0 2px; }
+.bar-fill { display: block; height: 100%; border-radius: 999px; background: var(--accessible); transition: width 0.3s ease; }
+.bar-fill.near { background: var(--maple); }
+.bar-fill.over { background: var(--cedar); }
+.bar-fill.none { background: var(--muted); }
+@media (prefers-color-scheme: dark) { .bar-fill { background: var(--shield); } .bar-fill.over { background: #ff7a55; } }
+.bar-pace { position: absolute; top: -3px; width: 2px; height: 16px; background: var(--ink); opacity: 0.55; border-radius: 2px; transform: translateX(-1px); }
+#rep-bg > .bar { height: 12px; margin: 14px 0 2px; }
+.actions.bg-actions { width: auto; margin: 12px 0 0; }
+.bg-row .row-main { min-width: 0; }
+.bg-row .bar { margin-top: 7px; }

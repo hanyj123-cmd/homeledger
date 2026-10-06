@@ -2,7 +2,7 @@
 import { KEYS } from './config.js';
 
 const DB_NAME = 'homeledger';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 let dbPromise = null;
 
 export function openDB() {

@@ -230,7 +230,8 @@ function renderReports() {
   v.replaceChildren();
   if (!state.data.accounts.length) { v.append(emptyState()); return; }
   v.append(reports.render({
-    h, fmt, state, items: state.d.items, accounts: state.data.accounts, accMap: state.d.accMap,
+    h, fmt, toast, state, items: state.d.items, accounts: state.data.accounts, accMap: state.d.accMap, data: state.data,
+    saveBudgets: async (rows) => { await sync.saveBatch({ Budgets: rows }, ['Budgets']); await reload(); renderReports(); },
     rerender: () => renderReports(),
     goSearch: (text) => { state.query = text; state.tab = 'txns'; renderAll(); }
   }));
