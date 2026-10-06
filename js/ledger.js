@@ -149,6 +149,9 @@ export function accLabel(a) {
   return a.name + ko;
 }
 
+/** "분류 필요"인 거래인가: 미분류(9999) 줄이 남아 있을 때만 (예전에 남은 REVIEW 표시만으로는 아님) */
+export const needsCategory = (it) => !!it && (String(it.desc && it.desc.categoryId) === '9999' || (it.ps || []).some((p) => !truthy(p.deleted) && String(p.account_id) === '9999'));
+
 export const isMoneyAccount = (a) => !!a && (a.type === 'ASSET' || a.type === 'LIABILITY') && a.subtype !== 'CLEARING';
 
 export function makeAccMap(accounts) {
@@ -514,7 +517,10 @@ export function makeRecords(form, ctx) {
     txn_id: txnId, date: form.date, merchant: (form.merchant || '').trim(), memo: (form.memo || '').trim(),
     currency: ccy, subtotal_orig: amount, total_orig: amount, fx_rate: rate, fx_source: fxSource, fx_status: fxStatus,
     total_cad: cad, source: base.source || 'MANUAL',
-    status: kind === 'OPENING' ? 'MATCHED' : (base.status || 'PENDING_MATCH'),
+    // 미분류(9999)가 더는 없으면 "확인 필요(REVIEW)" 표시는 풀어 줍니다 — 안 그러면 카테고리를 고쳐도 Needs category 가 남습니다
+    status: kind === 'OPENING' ? 'MATCHED' : (String(base.status || '').toUpperCase() === 'REVIEW'
+      ? (postings.some((p) => !truthy(p.deleted) && String(p.account_id) === '9999') ? 'REVIEW' : 'MATCHED')
+      : (base.status || 'PENDING_MATCH')),
     owner: form.owner || 'Joint', trip_tag: (form.tripTag || '').trim(), is_passthrough: passthrough,
     created_at: base.created_at || now, updated_at: now, deleted: false
   });

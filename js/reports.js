@@ -19,7 +19,7 @@ export function incomeStatementOver(items, accMap, months) {
   let reviewCount = 0;
   items.forEach((it) => {
     if (!monthSet.has(L.monthOf(it.txn.date))) return;
-    let review = String(it.txn.status).toUpperCase() === 'REVIEW';
+    let review = false;
     it.ps.forEach((p) => {
       const a = accMap.get(String(p.account_id));
       if (!a) return;

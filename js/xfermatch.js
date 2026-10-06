@@ -96,7 +96,6 @@ function nodeOf(it, accMap) {
   if (cat === UNCAT_ID) strong.push('uncategorized');
   if (marked) strong.push('migrated');
   if (cat === CONFIG.CLEARING_ID) (marked ? strong : weak).push('clearing');
-  if (String(t.status || '').toUpperCase() === 'REVIEW') weak.push('review');
   if (WORDS.test([t.merchant, t.merchant_raw, t.memo].filter(Boolean).join(' '))) weak.push('words');
   return { it, id: String(t.txn_id), day, acct: String(m.account_id), cents, m, c, strong, weak, any: strong.length + weak.length > 0 };
 }

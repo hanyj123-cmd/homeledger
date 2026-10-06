@@ -10,6 +10,7 @@ import * as receiptui from './receiptui.js';
 import * as RV from './receiptview.js';
 import { openRemember } from './rememberui.js';
 import * as X from './xfermatch.js';
+import { planBulk, batchOf, sheet as bulkSheet, skipSummary } from './bulk.js';
 
 let cur = null;            // { api, spec, picked:Set, pickMode }
 let dock = null;           // { el, fallback }  (아이패드 전용)
@@ -73,7 +74,7 @@ function build() {
   const rows = gather(state, spec);
   const absorbed = X.absorbedMap(state.data.txns);
   const total = L.round(rows.reduce((s, r) => s + r.v, 0), 2);
-  const todo = rows.filter((r) => String(r.it.desc.categoryId) === '9999' || String(r.it.txn.status).toUpperCase() === 'REVIEW').length;
+  const todo = rows.filter((r) => L.needsCategory(r.it)).length;
 
   const head = h('div', { class: 'dp-head' },
     h('div', { class: 'tt' }, h('h2', null, spec.title), h('div', { class: 'ss' }, (spec.sub ? spec.sub + ' · ' : '') + rows.length + ' transaction(s) (거래 ' + rows.length + '건)')),
@@ -123,8 +124,16 @@ function build() {
     const keys = order.filter((g) => groups.has(g)).concat(Array.from(groups.keys()).filter((g) => order.indexOf(g) < 0));
     return h('select', {
       class: 'dp-cat', 'aria-label': 'Category (카테고리)',
-      onchange: (e) => edit(it, { categoryId: e.target.value, categoryTouched: true }, true)
-    }, keys.map((g) => h('optgroup', { label: L.GROUP_LABELS[g] || g }, groups.get(g).map((a) => h('option', { value: a.account_id, selected: String(a.account_id) === String(it.desc.categoryId) }, L.accLabel(a))))));
+      onchange: (e) => {
+        const v = e.target.value;
+        if (v === '__PT') editSpecial(it, 'PASSTHROUGH', '');
+        else if (v === '__TR') pickAccountFor(it);
+        else edit(it, { categoryId: v, categoryTouched: true }, true);
+      }
+    }, keys.map((g) => h('optgroup', { label: L.GROUP_LABELS[g] || g }, groups.get(g).map((a) => h('option', { value: a.account_id, selected: String(a.account_id) === String(it.desc.categoryId) }, L.accLabel(a))))).concat([
+      h('optgroup', { label: 'Other types (그 밖의 유형)' },
+        h('option', { value: '__PT' }, 'Passthrough (전달 자금)'),
+        h('option', { value: '__TR' }, 'Transfer (이체) …'))]));
   };
 
   const rcIds = RV.receiptTxnIds(state.data);
@@ -132,7 +141,7 @@ function build() {
     const it = r.it, t = it.txn, dsc = it.desc;
     const id = String(t.txn_id);
     const simple = isSimple(state, it);
-    const review = String(dsc.categoryId) === '9999' || String(t.status).toUpperCase() === 'REVIEW';
+    const review = L.needsCategory(it);
     const cat = state.d.accMap.get(String(dsc.categoryId));
     const amtEl = simple
       ? h('input', {
@@ -309,6 +318,41 @@ function splitList(it, spec, fmt, h) {
       h('span', { class: 'n' }, l.name),
       h('span', { class: 'o' }, [L.ownerLabel(l.owner || it.txn.owner || 'Joint'), l.memo].filter(Boolean).join(' · ')),
       h('span', { class: 'a' }, (l.cad < 0 ? '−' : '') + fmt(Math.abs(l.cad)) + (ccy !== 'CAD' ? ' (' + fmt(Math.abs(l.orig), ccy) + ')' : '')))));
+}
+
+// Passthrough / Transfer 로 바꾸기 (일괄 변경과 같은 규칙 — js/bulk.js planBulk)
+async function editSpecial(it, special, acctId) {
+  const { api } = cur;
+  const { state } = api;
+  const id = String(it.txn.txn_id);
+  let plan;
+  try { plan = planBulk([it], [id], { special, transferAccountId: acctId }, state.d.accMap, L.nowIso(), { lineItems: state.data.lineItems || [] }); } catch (e) { api.toast(e.message || String(e)); mount(); return; }
+  if (!plan.changed) { api.toast('Not changed (바꾸지 못했습니다)' + (plan.skipped.length ? ': ' + skipSummary(plan.skipped) : '')); mount(); return; }
+  try {
+    const { puts, order } = batchOf(plan, [], false);
+    await sync.saveBatch(puts, order);
+    await api.reload();
+    api.renderBody(true);
+    api.toast(special === 'PASSTHROUGH' ? 'Set to passthrough (전달 자금으로 변경)' : 'Set to transfer (이체로 변경)');
+  } catch (e) { api.toast('저장하지 못했습니다: ' + (e.message || e)); mount(); }
+}
+
+// 이체: 상대 계좌 고르기 (시트)
+function pickAccountFor(it) {
+  const { api } = cur;
+  const { h, state } = api;
+  const own = new Set(it.ps.filter((p) => !L.truthy(p.deleted)).map((p) => String(p.account_id)));
+  const accts = state.data.accounts.filter((a) => L.isActive(a) && L.isMoneyAccount(a) && !own.has(String(a.account_id)))
+    .sort((x, y) => (L.num(x.sort_order) - L.num(y.sort_order)) || String(x.name).localeCompare(String(y.name)));
+  const out = it.desc.flow === 'in' || it.desc.kind === 'INCOME';
+  const close = bulkSheet(api, 'Make it a transfer (이체로 바꾸기)',
+    (out ? 'Which account did the money come from? (돈이 어느 계좌에서 왔나요?)' : 'Which account did the money go to? (돈이 어느 계좌로 갔나요?)'),
+    h('div', { class: 'bk-cl dp-xpick', id: 'dp-xpick' }, accts.map((a) => h('button', {
+      type: 'button', class: 'bk-cat', 'data-id': a.account_id,
+      onclick: () => { close(); editSpecial(it, 'TRANSFER', String(a.account_id)); }
+    }, L.accLabel(state.d.accMap.get(String(a.account_id)) || a)))),
+    h('div', { class: 'btnrow' }, h('button', { type: 'button', class: 'btn secondary', onclick: () => { close(); mount(); } }, 'Cancel (취소)')));
+  if (!close) mount();
 }
 
 async function edit(it, patch, askRemember) {

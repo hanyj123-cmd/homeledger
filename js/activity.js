@@ -67,7 +67,7 @@ export function filterItems(api) {
   const acct = state.acct ? d.accMap.get(String(state.acct)) : null;
   if (acct) items = items.filter((it) => it.ps.some((p) => !L.truthy(p.deleted) && String(p.account_id) === String(acct.account_id)));
   const k = state.kind || '';
-  if (k === 'REVIEW') items = items.filter((it) => String(it.desc.categoryId) === '9999' || String(it.txn.status).toUpperCase() === 'REVIEW');
+  if (k === 'REVIEW') items = items.filter((it) => L.needsCategory(it));
   else if (k === 'TRANSFER') items = items.filter((it) => it.desc.kind === 'TRANSFER' || it.desc.kind === 'OPENING' || it.desc.kind === 'PASSTHROUGH');
   else if (k) items = items.filter((it) => it.desc.kind === k);
   return items;
@@ -201,7 +201,7 @@ export function render(api) {
     search,
     h('div', { class: 'r' }, selBtn, filterBtn, printBtn, dlBtn));
 
-  const reviewCount = d.items.filter((it) => L.monthOf(it.txn.date) === month && (String(it.desc.categoryId) === '9999' || String(it.txn.status).toUpperCase() === 'REVIEW')).length;
+  const reviewCount = d.items.filter((it) => L.monthOf(it.txn.date) === month && (L.needsCategory(it))).length;
   const chips = state.filterOpen ? h('div', { class: 'chips', id: 'kind-chips' }, [['', 'All (전체)'], ['EXPENSE', 'Expense (지출)'], ['INCOME', 'Income (수입)'], ['TRANSFER', 'Transfer (이체)'], ['REVIEW', 'Needs category (분류 필요' + (reviewCount ? ' ' + reviewCount : '') + ')']]
     .map((k) => h('button', { type: 'button', class: 'chipf' + ((state.kind || '') === k[0] ? ' on' : ''), 'data-kind': k[0], onclick: () => { state.kind = k[0]; api.rerender(); } }, k[1]))) : null;
 
@@ -410,7 +410,7 @@ export function render(api) {
       const t = it.txn, dsc = it.desc;
       const c = columnsOf(it, a);
       const bal = tl && tl.has(String(t.txn_id)) ? tl.get(String(t.txn_id)) : null;
-      const todo = String(dsc.categoryId) === '9999' || String(t.status).toUpperCase() === 'REVIEW';
+      const todo = L.needsCategory(it);
       const foreign = t.currency && t.currency !== 'CAD';
       if (q && t.date !== lastDay) { /* 검색 결과는 날짜가 섞이므로 날짜 칸을 그대로 둡니다 */ }
       lastDay = t.date;

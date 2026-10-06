@@ -467,7 +467,10 @@ export function matchLines(lines, accountId, items, claimed) {
       if (diff > MATCH_WINDOW_DAYS) return;
       const isTransfer = it.desc.kind === 'TRANSFER';
       const name = isTransfer ? 0.85 : nameSim(ln.description, it.txn.merchant || it.txn.memo || '');
-      const score = 0.4 * name + 0.3 + 0.3 * (1 - diff / (MATCH_WINDOW_DAYS + 1));
+      let score = 0.4 * name + 0.3 + 0.3 * (1 - diff / (MATCH_WINDOW_DAYS + 1));
+      // 영수증으로 입력한 거래(나눈 거래 포함)는 가게 이름이 명세서와 달라도(예: Amazon.ca ↔ AMZN Mktp) 같은 계좌·같은 금액·가까운 날짜면 자동 연결 —
+      // 아직 짝이 없는 영수증 거래가 명세서 줄과 따로 한 번 더 들어와 이중으로 잡히는 것을 막습니다. (이름이 맞는 쪽이 먼저 짝지어짐)
+      if (it.txn.receipt_id && score < AUTO_MATCH_SCORE) score = AUTO_MATCH_SCORE + score * 0.01;
       cands.push({ li, ii, score });
     });
   });

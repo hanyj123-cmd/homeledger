@@ -2257,3 +2257,9 @@ button.txf-receipt.add { background: var(--surface); border-style: dashed; }
 .btn.danger.outline { background: transparent; }
 #cd-use, #cd-unused { margin: 4px 0 10px; line-height: 1.5; }
 #cd-dest { width: 100%; min-height: 48px; }
+
+/* v0.16 — 일괄 변경의 "그 밖의 유형"(전달 자금 · 이체) */
+.bk-xrow { display: block; margin: 10px 0 4px; }
+.bk-xrow select { width: 100%; min-height: 48px; }
+.dp-xpick { display: grid; gap: 8px; padding: 4px 0 8px; }
+.dp-xpick .bk-cat { min-height: 48px; text-align: left; }
