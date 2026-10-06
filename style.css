@@ -181,3 +181,12 @@ input[type="file"] { width: 100%; padding: 8px 0; font-size: 16px; }
 .rawrow { white-space: pre; margin: 2px 0; }
 details.card > summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; margin-bottom: 8px; }
 .tabs button .ko { font-size: 0.62rem; }
+
+/* 보고서 */
+.seg.two-seg { grid-template-columns: 1fr 1fr; }
+.seg.two-seg button { font-size: 0.78rem; }
+.warn-card { display: block; width: 100%; text-align: left; border-color: var(--warn); color: var(--warn); font-size: 0.82rem; cursor: pointer; }
+div.warn-card { cursor: default; }
+.row.static { cursor: default; }
+.row.static:active { transform: none; }
+.rep-row .row-sub { white-space: normal; }

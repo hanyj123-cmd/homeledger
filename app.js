@@ -4,6 +4,7 @@ import * as sync from './js/sync.js';
 import * as ui from './js/ui.js';
 
 export async function start() {
+  auth.onAuth((s) => { if (s.signedIn) sync.sync(); });
   auth.init();
   await ui.init();
   sync.startAutoSync();

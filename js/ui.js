@@ -4,6 +4,7 @@ import * as L from './ledger.js';
 import * as sync from './sync.js';
 import * as auth from './auth.js';
 import * as importui from './importui.js';
+import * as reports from './reports.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, ccy) => L.fmtMoney(n, ccy);
@@ -138,6 +139,7 @@ export function renderBody(force) {
   if (!force && state.tab === 'txns' && $('q') && document.activeElement === $('q')) { renderList(); return; }
   if (state.tab === 'txns') renderTxns();
   else if (state.tab === 'accounts') renderAccounts();
+  else if (state.tab === 'reports') renderReports();
   else if (state.tab === 'import') renderImport();
   else renderSettings();
 }
@@ -211,6 +213,19 @@ function row(it) {
     h('div', { class: 'row-right' },
       h('div', { class: 'row-amt ' + dsc.flow }, arrow + ' ' + fmt(L.num(t.total_cad))),
       foreign ? h('div', { class: 'row-fx' }, prov + fmt(L.num(t.total_orig), t.currency)) : null));
+}
+
+// ───────── 보고서 (손익 · 재무상태) ─────────
+
+function renderReports() {
+  const v = $('view');
+  v.replaceChildren();
+  if (!state.data.accounts.length) { v.append(emptyState()); return; }
+  v.append(reports.render({
+    h, fmt, state, items: state.d.items, accounts: state.data.accounts, accMap: state.d.accMap,
+    rerender: () => renderReports(),
+    goSearch: (text) => { state.query = text; state.tab = 'txns'; renderAll(); }
+  }));
 }
 
 // ───────── 명세서 가져오기 ─────────
