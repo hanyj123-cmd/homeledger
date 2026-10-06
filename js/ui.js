@@ -21,6 +21,7 @@ import * as settingsui from './settingsui.js';
 import * as theme from './theme.js';
 import * as txnform from './txnform.js';
 import * as xfer from './xfermatch.js';
+import * as paybundle from './paybundle.js';
 import * as RV from './receiptview.js';
 import * as models from './models.js';
 
@@ -192,14 +193,19 @@ export async function init() {
   $('drawer-scrim')?.addEventListener('click', () => drill.close());
   onLayout(() => { if (state.d) renderAll(); });
   sync.onStatus(renderChip);
-  sync.onData(async () => { await reload(); renderBody(); xfer.autoMatch(xferApi()); });   // 이체 자동 연결 (동기화·가져오기 후)
+  sync.onData(async () => { await reload(); renderBody(); autoTasks(); });   // 이체 자동 연결 · 급여일 연동 입력 (동기화·가져오기 후)
   auth.onAuth(() => { sync.refreshStatus().then(renderChip); });
   await reload();
   await sync.refreshStatus();
   renderAll();
-  xfer.autoMatch(xferApi());   // 이체 자동 연결 (처음 불러온 뒤)
+  autoTasks();   // 이체 자동 연결 · 급여일 연동 입력 (처음 불러온 뒤)
 }
 const xferApi = () => ({ h, toast, state, reload, renderBody });
+// 자동 작업은 차례로 (같은 시트를 동시에 쓰지 않도록)
+async function autoTasks() {
+  try { await paybundle.autoRun(xferApi()); } catch (e) { console.error(e); }
+  try { await xfer.autoMatch(xferApi()); } catch (e) { console.error(e); }
+}
 
 export async function doSignIn() {
   try {

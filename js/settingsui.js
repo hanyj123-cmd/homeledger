@@ -19,6 +19,7 @@ import * as MG from './migrate.js';
 import { categoriesCard } from './catform.js';
 import * as prefs from './prefs.js';
 import * as XF from './xfermatch.js';
+import * as PB from './paybundle.js';
 import * as RV from './receiptview.js';
 import * as R from './receipts.js';
 import * as models from './models.js';
@@ -745,8 +746,66 @@ export function render(api) {
     ];
   });
 
+  // ═════ 급여일 연동 입력 (paybundle.js) ═════
+  const secPay = live('set-pay', (redraw) => {
+    const cfg = PB.readCfg(api.data.settings);
+    const on = !!(cfg && cfg.enabled !== false);
+    const names = (id) => { const a = api.accMap.get(String(id)); return a ? a.name : String(id); };
+    const runApi = () => ({ state: api.state, reload: api.reload, renderBody: api.rerender, toast });
+    const save = async (next, msg) => {
+      await api.saveSettings(PB.cfgRow(api.data.settings, next, L.nowIso()));
+      if (msg) toast(msg);
+    };
+    const detect = () => PB.detectFromHistory(api.items, api.accMap, (cfg && cfg.trigger) || PB.DEFAULT_TRIGGER);
+    const turnOn = async () => {
+      if (cfg) { await save(Object.assign({}, cfg, { enabled: !on }), !on ? 'Pay-day entries on (급여일 연동 켬)' : 'Pay-day entries off (급여일 연동 끔)'); }
+      else {
+        const det = detect();
+        if (!det.length) { toast('No linked items found in your history yet (이력에서 연동 항목을 아직 못 찾았어요)'); return; }
+        await save({ enabled: true, trigger: PB.DEFAULT_TRIGGER, since: PB.defaultSince(), items: det }, 'Pay-day entries on (급여일 연동 켬)');
+      }
+      if (!on) PB.autoRun(runApi());
+    };
+    const itemRow = (it, i) => {
+      const upd = (patch) => save(Object.assign({}, cfg, { items: cfg.items.map((x, j) => (j === i ? Object.assign({}, x, patch) : x)) }));
+      return h('div', { class: 'pay-item', 'data-key': it.key },
+        h('div', { class: 'pay-main' },
+          h('b', null, it.label),
+          h('div', { class: 'hint' }, names(it.incomeId) + ' → ' + names(it.assetId) + ' · ' + L.fmtMoney(it.amount || 0, 'CAD'))),
+        h('div', { class: 'pay-checks' },
+          h('label', { class: 'pay-chk' }, h('input', { type: 'checkbox', class: 'pay-on', checked: it.on !== false, onchange: (e) => upd({ on: e.target.checked }) }), h('span', null, 'Add (추가)')),
+          h('label', { class: 'pay-chk' }, h('input', { type: 'checkbox', class: 'pay-sav', checked: !!it.saving, onchange: (e) => upd({ saving: e.target.checked }) }), h('span', null, '+ (Saving) entry (저축 짝)'))));
+    };
+    return [
+      head('transfer', 'Pay-day linked entries', '급여일 연동 입력'),
+      h('div', { class: 'set-switchrow' },
+        h('div', null, h('b', null, 'Add them automatically on pay day (급여일에 자동으로 추가)'),
+          h('div', { class: 'hint' }, 'When a pay entry such as TD PAY is recorded, the employer-plan entries (EOP, DC Pension…) are added on the same date with the last amount (급여가 기록되면 같은 날짜에 회사 적립금 항목을 직전 금액으로 함께 넣어요). If an amount changes, just edit that entry (금액이 달라지면 해당 거래만 고치면 돼요).')),
+        h('button', { type: 'button', class: 'set-switch' + (on ? ' on' : ''), id: 'set-pay-toggle', role: 'switch', 'aria-checked': String(on), 'aria-label': 'Add pay-day entries automatically (급여일 연동 자동 입력)', onclick: turnOn }, h('i'))),
+      cfg ? [
+        h('div', { class: 'pay-fields' },
+          h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Pay entry name (급여 거래 이름)'),
+            h('input', { type: 'text', id: 'set-pay-trigger', autocomplete: 'off', autocapitalize: 'off', value: cfg.trigger || PB.DEFAULT_TRIGGER, onchange: (e) => save(Object.assign({}, cfg, { trigger: e.target.value.trim() || PB.DEFAULT_TRIGGER })) })),
+          h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Fill in from (이 날짜부터 채우기)'),
+            h('input', { type: 'date', id: 'set-pay-since', value: cfg.since || '', onchange: (e) => { if (e.target.value) save(Object.assign({}, cfg, { since: e.target.value })); } }))),
+        h('div', { class: 'pay-list', id: 'set-pay-list' }, (cfg.items || []).length ? cfg.items.map(itemRow) : h('div', { class: 'hint' }, 'No items yet (아직 항목이 없어요).')),
+        h('div', { class: 'btnrow' },
+          h('button', { type: 'button', class: 'btn secondary sm', id: 'set-pay-detect', onclick: async () => {
+            const r = PB.mergeDetected(cfg, detect());
+            if (!r.added) { toast('No new items found (새 항목이 없어요)'); return; }
+            await save(r.cfg, 'Found ' + r.added + ' new item(s) (새 항목 ' + r.added + '개를 찾았어요)');
+          } }, 'Find items from history (이력에서 항목 찾기)'),
+          h('button', { type: 'button', class: 'btn sm', id: 'set-pay-run', disabled: !on, onclick: async () => {
+            const n = await PB.autoRun(runApi());
+            if (!n) toast('Nothing to add — all pay days are filled (추가할 게 없어요 — 모든 급여일이 채워져 있어요)');
+          } }, 'Fill in now (지금 채우기)'))
+      ] : null,
+      note('Entries you delete are not added again (지운 항목은 다시 만들지 않아요). Existing entries are never changed (이미 있는 거래는 건드리지 않아요).')
+    ];
+  });
+
   // ═════ 배치 ═════
-  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secModel, secReceipts, secXfer, categoriesCard(api, icon), secInstall, secData, secMigrate, secRules);   // 규칙 카드는 길어서 맨 아래 (접어 둠)
+  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secModel, secReceipts, secXfer, secPay, categoriesCard(api, icon), secInstall, secData, secMigrate, secRules);   // 규칙 카드는 길어서 맨 아래 (접어 둠)
   root.append(h('div', { class: 'page set-page', }, grid,
     h('div', { class: 'set-foot' },
       h('div', { class: 'muted small', id: 'set-foot-ver' }, 'Home Ledger v' + CONFIG.APP_VERSION),

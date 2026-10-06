@@ -2302,3 +2302,13 @@ input[type="date"]::-webkit-date-and-time-value { text-align: left; min-height: 
 .rules-body[hidden] { display: none; }
 @media (max-width: 560px) { .set-fold .fold-count { display: none; } }
 @media (prefers-reduced-motion: reduce) { .set-fold .fold-chev { transition: none; } }
+
+/* v0.18 — 급여일 연동 입력 카드 */
+.pay-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px 14px; margin: 10px 0 4px; }
+.pay-list { display: grid; gap: 8px; margin: 8px 0; }
+.pay-item { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.pay-main { min-width: 0; overflow-wrap: anywhere; }
+.pay-main .hint { margin: 2px 0 0; }
+.pay-chk { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; font-size: 0.95em; }
+.pay-chk input { width: 22px; height: 22px; flex: none; accent-color: var(--green); }
+.pay-checks { display: flex; flex-wrap: wrap; gap: 0 22px; }
