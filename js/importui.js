@@ -31,7 +31,6 @@ export function render(api) {
 
   function draw() {
     root.replaceChildren();
-    root.append(h('h2', { class: 'sect' }, 'Import statement (명세서 가져오기)'));
     if (S.done) { root.append(doneCard()); return; }
     root.append(pickCard());
     if (S.error) root.append(h('div', { class: 'err', role: 'alert', id: 'imp-err' }, S.error));

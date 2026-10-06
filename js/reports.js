@@ -11,12 +11,13 @@ const lastDayOf = (ym) => {
   return ym + '-' + String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0');
 };
 
-// items = [{txn, ps}], accMap = Map(account_id → account)
-export function incomeStatement(items, accMap, ym) {
+// items = [{txn, ps}], accMap = Map(account_id → account), months = ['YYYY-MM', …]
+export function incomeStatementOver(items, accMap, months) {
+  const monthSet = new Set(months);
   const inc = new Map(), exp = new Map();
   let reviewCount = 0;
   items.forEach((it) => {
-    if (L.monthOf(it.txn.date) !== ym) return;
+    if (!monthSet.has(L.monthOf(it.txn.date))) return;
     let review = String(it.txn.status).toUpperCase() === 'REVIEW';
     it.ps.forEach((p) => {
       const a = accMap.get(String(p.account_id));
@@ -46,8 +47,10 @@ export function incomeStatement(items, accMap, ym) {
   const income = L.round(incomeLines.reduce((s, l) => s + l.amount, 0), 2);
   const expense = L.round(expenseGroups.reduce((s, g) => s + g.total, 0), 2);
   const net = L.round(income - expense, 2);
-  return { ym, incomeLines, income, expenseGroups, expense, net, savingsRate: income > 0 ? L.round(net / income * 100, 1) : null, reviewCount };
+  return { ym: months.length === 1 ? months[0] : months[0] + '…' + months[months.length - 1], months, incomeLines, income, expenseGroups, expense, net, savingsRate: income > 0 ? L.round(net / income * 100, 1) : null, reviewCount };
 }
+
+export function incomeStatement(items, accMap, ym) { return incomeStatementOver(items, accMap, [ym]); }
 
 // 월말 기준 재무상태. 장부가 맞는지(자산 − 부채 = 자본)도 확인합니다.
 export function balanceSheet(accounts, items, accMap, ym) {
@@ -73,151 +76,370 @@ export function balanceSheet(accounts, items, accMap, ym) {
   return { ym, asOf, assets, totalAssets, liabilities, totalLiab, equityLines, retained, equityTotal, net, diff: L.round(net - equityTotal, 2) };
 }
 
+// ───────── 비교 (손익: 이번 vs 이전, 예산) ─────────
+
+/** 'M' = 그 달 하나 / 'Y' = 그 해 1월부터 그 달까지 */
+export function scopeMonths(ym, scope) {
+  if (scope !== 'Y') return [ym];
+  const y = ym.slice(0, 4);
+  const out = [];
+  for (let m = 1; m <= Number(ym.slice(5, 7)); m++) out.push(y + '-' + String(m).padStart(2, '0'));
+  return out;
+}
+/** 비교 대상: 달 = 지난달 / 올해 누계 = 작년 같은 기간 */
+export function priorMonths(ym, scope) {
+  if (scope !== 'Y') return [L.shiftMonth(ym, -1)];
+  return scopeMonths(ym, 'Y').map((m) => (Number(m.slice(0, 4)) - 1) + m.slice(4));
+}
+
+const sumBudget = (budgets, months, id) => L.round(months.reduce((s, m) => s + (B.budgetMap(budgets, m).get(String(id)) || 0), 0), 2);
+
+const pctChange = (cur, prev) => (Math.abs(prev) > 0.004 ? L.round((cur - prev) / Math.abs(prev) * 100, 1) : null);
+
+/**
+ * 손익 비교표. 두 기간의 줄을 합쳐서 (한쪽에만 있어도 보이게) 줄마다
+ * { id, name, name_ko, cur, prev, delta, pct, budget, used } 를 만듭니다.
+ * 반환: { income:{lines,cur,prev,budget}, groups:[{key,label,lines,cur,prev,budget}], expense:{cur,prev,budget}, net:{cur,prev} }
+ */
+export function compareIS(items, accMap, budgets, months, prevMonths) {
+  const cur = incomeStatementOver(items, accMap, months);
+  const prev = incomeStatementOver(items, accMap, prevMonths);
+  const merge = (curLines, prevLines, withBudget) => {
+    const map = new Map();
+    curLines.forEach((l) => map.set(l.id, { id: l.id, name: l.name, name_ko: l.name_ko, cur: l.amount, prev: 0 }));
+    prevLines.forEach((l) => { const e = map.get(l.id); if (e) e.prev = l.amount; else map.set(l.id, { id: l.id, name: l.name, name_ko: l.name_ko, cur: 0, prev: l.amount }); });
+    return Array.from(map.values()).map((e) => {
+      const budget = withBudget ? sumBudget(budgets, months, e.id) : 0;
+      return Object.assign(e, { delta: L.round(e.cur - e.prev, 2), pct: pctChange(e.cur, e.prev), budget, used: budget > 0 ? Math.round(e.cur / budget * 100) : null });
+    }).sort((a, b) => (b.cur - a.cur) || (b.prev - a.prev));
+  };
+  const total = (lines, key) => L.round(lines.reduce((s, l) => s + l[key], 0), 2);
+  const incLines = merge(cur.incomeLines, prev.incomeLines, false);
+  const keys = new Set();
+  cur.expenseGroups.forEach((g) => keys.add(g.key)); prev.expenseGroups.forEach((g) => keys.add(g.key));
+  const order = L.GROUP_ORDER.filter((g) => keys.has(g)).concat(Array.from(keys).filter((g) => L.GROUP_ORDER.indexOf(g) < 0));
+  const groups = order.map((key) => {
+    const cg = cur.expenseGroups.find((g) => g.key === key), pg = prev.expenseGroups.find((g) => g.key === key);
+    const lines = merge(cg ? cg.lines : [], pg ? pg.lines : [], true);
+    return { key, label: L.GROUP_LABELS[key] || key, lines, cur: total(lines, 'cur'), prev: total(lines, 'prev'), budget: total(lines, 'budget') };
+  });
+  const expCur = L.round(groups.reduce((s, g) => s + g.cur, 0), 2), expPrev = L.round(groups.reduce((s, g) => s + g.prev, 0), 2);
+  const incCur = total(incLines, 'cur'), incPrev = total(incLines, 'prev');
+  return {
+    months, prevMonths, review: cur.reviewCount,
+    income: { lines: incLines, cur: incCur, prev: incPrev },
+    groups, expense: { cur: expCur, prev: expPrev, budget: L.round(groups.reduce((s, g) => s + g.budget, 0), 2) },
+    net: { cur: L.round(incCur - expCur, 2), prev: L.round(incPrev - expPrev, 2) },
+    savingsRate: incCur > 0 ? L.round((incCur - expCur) / incCur * 100, 1) : null
+  };
+}
+
 // ───────── 화면 ─────────
 
-let mode = 'IS';
-export function setMode(m) { mode = m; }
+import { icon } from './icons.js';
+import { layoutOf } from './layout.js';
+import * as drill from './drill.js';
 
-// api = { h, fmt, state, items, accounts, accMap, rerender, goSearch(text) }
+let mode = 'IS';
+let scope = 'M';
+export function setMode(m) { mode = m; }
+export function setScope(s) { scope = s === 'Y' ? 'Y' : 'M'; }
+
+const fmtDate = (s) => { const d = new Date(String(s).slice(0, 10) + 'T12:00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
+const rangeLabel = (ms) => (ms.length === 1 ? L.monthLabel(ms[0]) : L.monthLabel(ms[0]) + ' – ' + L.monthLabel(ms[ms.length - 1]));
+
+// api = { h, fmt, state, items, accounts, accMap, data, toast, saveBudgets, rerender, goSearch, openForm, drillApi }
 export function render(api) {
   const { h, fmt, state } = api;
-  const root = document.createDocumentFragment();
-  const seg = h('div', { class: 'seg three-seg' },
-    [['IS', 'Income (손익)'], ['BS', 'Balance (재무)'], ['BG', 'Budget (예산)']].map((m) => h('button', {
-      type: 'button', id: 'rep-' + m[0], class: mode === m[0] ? 'on' : '', onclick: () => { mode = m[0]; api.rerender(); }
-    }, m[1])));
-  const nav = h('div', { class: 'monthnav' },
-    h('button', { type: 'button', class: 'icon', 'aria-label': 'Previous month (이전 달)', onclick: () => { state.month = L.shiftMonth(state.month, -1); api.rerender(); } }, '‹'),
-    h('div', { class: 'monthlabel' }, L.monthLabel(state.month)),
-    h('button', { type: 'button', class: 'icon', 'aria-label': 'Next month (다음 달)', onclick: () => { state.month = L.shiftMonth(state.month, 1); api.rerender(); } }, '›'));
-  function stat(label, value, cls) {
-    return h('div', { class: 'stat' }, h('div', { class: 'stat-l' }, label), h('div', { class: 'stat-v ' + (cls || '') + (String(value).length >= 12 ? ' long' : '') }, value));
+  const lay = layoutOf();
+  const frag = document.createDocumentFragment();
+  const D = () => (api.drillApi ? api.drillApi() : api);
+  if (!state.repSel) state.repSel = new Set();
+  const month = state.month;
+
+  // 자료
+  const curMs = scopeMonths(month, mode === 'IS' ? scope : 'M');
+  const prvMs = priorMonths(month, mode === 'IS' ? scope : 'M');
+  const cmp = mode === 'IS' ? compareIS(api.items, api.accMap, api.data.budgets || [], curMs, prvMs) : null;
+  const bs = mode === 'BS' ? balanceSheet(api.accounts, api.items, api.accMap, month) : null;
+  const bsPrev = mode === 'BS' ? balanceSheet(api.accounts, api.items, api.accMap, L.shiftMonth(month, -1)) : null;
+  const today = L.todayStr();
+  const bg = mode === 'BG' ? B.compare(api.items, api.accMap, api.data.budgets || [], month, today) : null;
+
+  // ── 배너
+  const metrics = h('div', { class: 'metrics' });
+  const metric = (lab, val, sub, id) => h('div', { class: 'metric' + (sub ? ' sub' : ''), id: id || null }, h('div', { class: 'metric-lab' }, lab), h('div', { class: 'metric-val' }, val));
+  if (cmp) {
+    const lab = scope === 'Y' ? 'YTD' : L.monthLabel(month);
+    metrics.append(
+      metric('Net income · ' + lab + ' (순수입)', (cmp.net.cur < 0 ? '−' : '') + fmt(Math.abs(cmp.net.cur)), false, 'bn-net'),
+      metric('Income (수입)', fmt(cmp.income.cur), true, 'bn-in'),
+      metric('Spending (지출)', fmt(cmp.expense.cur), true, 'bn-out'),
+      cmp.savingsRate !== null ? metric('Savings rate (저축률)', cmp.savingsRate + '%', true, 'bn-rate') : null);
+  } else if (bs) {
+    const dn = L.round(bs.net - bsPrev.net, 2);
+    metrics.append(
+      metric('Net worth (순자산)', (bs.net < 0 ? '−' : '') + fmt(Math.abs(bs.net)), false, 'bn-net'),
+      metric('Assets (자산)', fmt(bs.totalAssets), true),
+      metric('Debts (부채)', fmt(bs.totalLiab), true),
+      metric('vs last month (전월 대비)', (dn >= 0 ? '▲ ' : '▼ ') + fmt(Math.abs(dn)), true));
+  } else if (bg) {
+    metrics.append(
+      metric(bg.left >= 0 ? 'Left (남은 예산)' : 'Over (초과)', (bg.left < 0 ? '−' : '') + fmt(Math.abs(bg.left)), false, 'bn-net'),
+      metric('Budget (예산)', fmt(bg.totalBudget), true),
+      metric('Spent (지출)', fmt(bg.totalActual), true),
+      bg.pct !== null ? metric('Used (사용)', bg.pct + '%', true) : null);
   }
-  const lineRow = (l, arrow, cls, share, gcls) => h('button', { type: 'button', class: 'row rep-row ' + (gcls || ''), onclick: () => api.goSearch(l.name) },
-    h('div', { class: 'row-main' },
-      h('div', { class: 'row-title' }, l.name),
-      share !== undefined ? h('div', { class: 'row-sub' }, share + '% of spending (지출 비중)') : null),
-    h('div', { class: 'row-right' }, h('div', { class: 'row-amt ' + cls }, (arrow ? arrow + ' ' : '') + fmt(l.amount))));
+  frag.append(h('section', { class: 'banner' }, h('div', { class: 'banner-in' },
+    h('div', { class: 'banner-row' },
+      h('div', { class: 'acct-pick' }, h('span', { class: 'nm' }, 'Household reports (가계 보고서)')),
+      h('div', { class: 'asof' }, mode === 'BS' ? 'As of ' : 'Through ', h('b', null, fmtDate(mode === 'BS' && bs ? bs.asOf : today)))),
+    metrics)));
 
-  const body = mode === 'IS' ? drawIS() : mode === 'BS' ? drawBS() : drawBG();
-  const masthead = h('div', { class: 'masthead' }, seg, nav);
-  const tiles = body.querySelector('.summary');
-  if (tiles) masthead.append(tiles);
-  root.append(masthead, body);
+  frag.append(h('div', { class: 'pills' },
+    h('button', { type: 'button', class: 'pillbtn', id: 'rep-new', onclick: () => api.openForm(null, {}) }, icon('plus', 24), 'New ', h('span', { class: 'ko' }, '거래 추가')),
+    h('button', { type: 'button', class: 'pillbtn', id: 'rep-csv', onclick: exportCsv }, icon('download', 24), 'Export ', h('span', { class: 'ko' }, '내려받기')),
+    h('button', { type: 'button', class: 'pillbtn', id: 'rep-print', onclick: () => window.print && window.print() }, icon('print', 24), 'Print ', h('span', { class: 'ko' }, '인쇄')),
+    h('button', { type: 'button', class: 'pillbtn', id: 'rep-ledger', onclick: () => api.goSearch('') }, icon('ledger', 24), 'Ledger ', h('span', { class: 'ko' }, '거래 탭'))));
 
-  return root;
+  // ── 페이지
+  const seg = h('div', { class: 'segtd', role: 'tablist' },
+    [['IS', 'Income', '손익'], ['BS', 'Balance', '재무'], ['BG', 'Budget', '예산']].map((m) => h('button', {
+      type: 'button', id: 'rep-' + m[0], role: 'tab', class: mode === m[0] ? 'on' : '', 'aria-selected': String(mode === m[0]),
+      onclick: () => { mode = m[0]; api.rerender(); }
+    }, m[1], h('span', { class: 'ko' }, m[2]))));
+  const stepBtn = (dir, lab) => h('button', { type: 'button', class: 'stepbtn', 'aria-label': lab, onclick: () => { state.month = L.shiftMonth(state.month, dir); api.rerender(); } }, icon(dir < 0 ? 'left' : 'right', 20));
+  const months = Array.from(new Set(api.items.map((it) => L.monthOf(it.txn.date)).concat([L.monthOf(today), month]))).sort().reverse();
+  const monthSel = h('label', { class: 'pillsel' }, icon('calendar', 20), h('span', { class: 'monthlabel' }, L.monthLabel(month)), icon('down', 18),
+    h('select', { id: 'rep-month', 'aria-label': 'Month (월)', onchange: (e) => { state.month = e.target.value; api.rerender(); } }, months.map((m) => h('option', { value: m, selected: m === month }, L.monthLabel(m)))));
+  const scopeSeg = mode === 'IS' ? h('div', { class: 'segtd sm', role: 'tablist' },
+    [['M', 'Month', '월'], ['Y', 'Year to date', '올해 누계']].map((s) => h('button', { type: 'button', id: 'rep-scope-' + s[0], class: scope === s[0] ? 'on' : '', onclick: () => { scope = s[0]; api.rerender(); } }, s[1], h('span', { class: 'ko' }, s[2])))) : null;
+  const toolbar = h('div', { class: 'toolbar' }, h('div', { class: 'l' }, stepBtn(-1, 'Previous month (이전 달)'), monthSel, stepBtn(1, 'Next month (다음 달)')), h('div', { class: 'r' }, scopeSeg));
+  const page = h('div', { class: 'page' }, seg, toolbar);
+  frag.append(page);
 
+  const selbar = h('div', { class: 'selbar', id: 'rep-selbar', hidden: true });
+  const body = h('div', { id: mode === 'IS' ? 'rep-is' : mode === 'BS' ? 'rep-bs' : 'rep-bg' });
+  const grid = h('div', { class: 'rep-grid' + (lay === 'tablet' ? ' docked' : '') }, body);
+  if (lay === 'tablet') {
+    const dock = h('div', { class: 'dock', id: 'dock' });
+    const fill = (el) => el.replaceChildren(h('div', { class: 'dock-empty' }, icon('list', 34), h('div', null, 'Tap a line to see its transactions here. (줄을 누르면 거래가 여기에 나옵니다.)')));
+    fill(dock);
+    drill.setDock(dock, fill);
+    grid.append(dock);
+  } else drill.setDock(null);
+
+  if (mode === 'IS') drawIS(); else if (mode === 'BS') drawBS(); else drawBG();
+  page.append(selbar, grid);
+  return frag;
+
+  // ───── 공통 ─────
+  function chg(delta, goodUp, big) {
+    if (Math.abs(delta) < 0.005) return h('span', { class: 'chg flat' }, '—');
+    const good = goodUp ? delta > 0 : delta < 0;
+    return h('span', { class: 'chg ' + (good ? 'good' : 'bad') }, h('span', { class: 'arw' }, delta > 0 ? '▲' : '▼'), fmt(Math.abs(delta)));
+  }
+  function pctEl(cur, prev, goodUp) {
+    const p = pctChange(cur, prev);
+    if (p === null) return h('span', { class: 'chg flat' }, cur ? 'new' : '—');
+    const delta = cur - prev;
+    if (Math.abs(delta) < 0.005) return h('span', { class: 'chg flat' }, '0%');
+    const good = goodUp ? delta > 0 : delta < 0;
+    return h('span', { class: 'chg ' + (good ? 'good' : 'bad') }, h('span', { class: 'arw' }, delta > 0 ? '▲' : '▼'), Math.abs(p) + '%');
+  }
+  function openLine(l, kind, ms, extra) {
+    D() && drill.show(D(), Object.assign({
+      key: kind + ':' + l.id + ':' + ms.join(','), title: l.name, sub: rangeLabel(ms), months: ms, ids: [l.id],
+      mode: kind === 'inc' ? 'inc' : 'exp', search: l.name, addDefaults: { kind: kind === 'inc' ? 'INCOME' : 'EXPENSE', categoryId: l.id }
+    }, extra || {}));
+  }
+  function exportCsv() {
+    const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const lines = [];
+    if (cmp) {
+      lines.push(['Section', 'Account', rangeLabel(curMs), rangeLabel(prvMs), 'Change', 'Change %', 'Budget'].map(q).join(','));
+      cmp.income.lines.forEach((l) => lines.push(['Income', l.name, l.cur, l.prev, l.delta, l.pct === null ? '' : l.pct, ''].map(q).join(',')));
+      cmp.groups.forEach((g) => g.lines.forEach((l) => lines.push([g.label, l.name, l.cur, l.prev, l.delta, l.pct === null ? '' : l.pct, l.budget || ''].map(q).join(','))));
+      lines.push(['Net', '', cmp.net.cur, cmp.net.prev, L.round(cmp.net.cur - cmp.net.prev, 2), '', ''].map(q).join(','));
+    } else if (bs) {
+      lines.push(['Section', 'Account', 'Owner', bs.asOf, bsPrev.asOf, 'Change'].map(q).join(','));
+      const pm = new Map(); bsPrev.assets.concat(bsPrev.liabilities).forEach((l) => pm.set(l.id, l.amount));
+      bs.assets.forEach((l) => lines.push(['Asset', l.name, l.owner, l.amount, pm.get(l.id) || 0, L.round(l.amount - (pm.get(l.id) || 0), 2)].map(q).join(',')));
+      bs.liabilities.forEach((l) => lines.push(['Liability', l.name, l.owner, l.amount, pm.get(l.id) || 0, L.round(l.amount - (pm.get(l.id) || 0), 2)].map(q).join(',')));
+      lines.push(['Net worth', '', '', bs.net, bsPrev.net, L.round(bs.net - bsPrev.net, 2)].map(q).join(','));
+    } else if (bg) {
+      lines.push(['Group', 'Category', 'Budget', 'Spent', 'Left'].map(q).join(','));
+      bg.groups.forEach((g) => g.lines.forEach((l) => lines.push([g.label, l.name, l.budget, l.actual, l.left].map(q).join(','))));
+    }
+    try {
+      const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'home-ledger-' + mode + '-' + month + '.csv'; document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      api.toast('CSV downloaded (내려받았습니다)');
+    } catch (e) { api.toast('Download not supported (이 기기에서는 내려받기가 안 됩니다)'); }
+  }
+
+  // ───── 손익 ─────
   function drawIS() {
-    const prev = incomeStatement(api.items, api.accMap, L.shiftMonth(state.month, -1));
-    const r = incomeStatement(api.items, api.accMap, state.month);
-    const box = h('div', { id: 'rep-is' });
-    box.append(h('div', { class: 'summary' },
-      stat('Income (수입)', '↑ ' + fmt(r.income), 'in'),
-      stat('Spending (지출)', '↓ ' + fmt(r.expense), 'out'),
-      stat('Net (순수입)', (r.net >= 0 ? '▲ ' : '▼ ') + fmt(Math.abs(r.net)), r.net >= 0 ? 'in' : 'out')));
-    if (r.savingsRate !== null) box.append(h('div', { class: 'note' }, 'Savings rate (저축률): ' + r.savingsRate + '% · Last month net (전월 순수입): ' + fmt(prev.net)));
-    if (r.reviewCount) {
-      box.append(h('button', { type: 'button', class: 'card warn-card', id: 'rep-review', onclick: () => api.goSearch('Uncategorized') },
-        r.reviewCount + ' transaction(s) need a category (카테고리 확인이 필요한 거래 ' + r.reviewCount + '건) — tap to review (눌러서 확인)'));
+    const lab = scope === 'Y' ? ['Year to date', '올해 누계'] : ['This month', '이번 달'];
+    const plab = scope === 'Y' ? ['Same period last year', '작년 같은 기간'] : ['Last month', '지난달'];
+    if (cmp.review) {
+      body.append(h('button', { type: 'button', class: 'card warn-card', id: 'rep-review', onclick: () => api.goSearch('Uncategorized') },
+        cmp.review + ' transaction(s) need a category (카테고리 확인이 필요한 거래 ' + cmp.review + '건) — tap to review (눌러서 확인)'));
     }
-    if (!r.incomeLines.length && !r.expenseGroups.length) {
-      box.append(h('div', { class: 'card center muted' }, 'No income or spending this month (이번 달 수입·지출이 없습니다).'));
-      return box;
+    if (!cmp.income.lines.length && !cmp.groups.length) {
+      body.append(h('div', { class: 'card center muted' }, 'No income or spending in this period (이 기간에 수입·지출이 없습니다).'));
+      return;
     }
-    if (r.incomeLines.length) {
-      box.append(h('h2', { class: 'sect grp g-in' }, 'Income (수입) · ' + fmt(r.income)));
-      const led = h('div', { class: 'ledger' });
-      r.incomeLines.forEach((l) => led.append(lineRow(l, '↑', 'in', undefined, 'g-in')));
-      box.append(led);
-    }
-    r.expenseGroups.forEach((g) => {
-      const pct = r.expense ? Math.round(g.total / r.expense * 100) : 0;
-      const pg = prev.expenseGroups.find((x) => x.key === g.key);
-      const gc = L.GROUP_CLASS[g.key] || '';
-      box.append(h('h2', { class: 'sect grp ' + gc }, g.label + ' · ' + fmt(g.total) + ' (' + pct + '%)'));
-      if (pg) box.append(h('div', { class: 'note' }, 'Last month (전월): ' + fmt(pg.total)));
-      const led = h('div', { class: 'ledger' });
-      g.lines.forEach((l) => led.append(lineRow(l, '↓', 'out', r.expense ? Math.round(l.amount / r.expense * 100) : 0, gc)));
-      box.append(led);
-    });
-    return box;
-  }
+    const sections = [];
+    if (cmp.income.lines.length) sections.push({ kind: 'inc', key: '수입', label: 'Income (수입)', cls: 'g-in', lines: cmp.income.lines, cur: cmp.income.cur, prev: cmp.income.prev, budget: 0 });
+    cmp.groups.forEach((g) => sections.push({ kind: 'exp', key: g.key, label: g.label, cls: L.GROUP_CLASS[g.key] || '', lines: g.lines, cur: g.cur, prev: g.prev, budget: g.budget }));
+    const lineIndex = new Map();
+    sections.forEach((s) => s.lines.forEach((l) => lineIndex.set(l.id, { l, s })));
 
-  function drawBS() {
-    const b = balanceSheet(api.accounts, api.items, api.accMap, state.month);
-    const box = h('div', { id: 'rep-bs' });
-    box.append(h('div', { class: 'summary' },
-      stat('Assets (자산)', fmt(b.totalAssets), ''),
-      stat('Debts (부채)', fmt(b.totalLiab), ''),
-      stat('Net worth (순자산)', (b.net >= 0 ? '▲ ' : '▼ ') + fmt(Math.abs(b.net)), b.net >= 0 ? 'in' : 'out')));
-    box.append(h('div', { class: 'note' }, 'As of (기준일): ' + b.asOf));
-    const section = (title, lines, total) => {
-      box.append(h('h2', { class: 'sect' }, title + ' · ' + fmt(total)));
-      if (!lines.length) { box.append(h('div', { class: 'card muted' }, '—')); return; }
-      const led = h('div', { class: 'ledger' });
-      lines.forEach((l) => led.append(h('div', { class: 'row rep-row static' },
-        h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, l.name), h('div', { class: 'row-sub' }, l.owner)),
-        h('div', { class: 'row-right' }, h('div', { class: 'row-amt' }, fmt(l.amount))))));
-      box.append(led);
+    const pickBtn = (id) => h('button', { type: 'button', class: 'pickc', 'aria-label': 'Select line (줄 선택)', 'data-pick': id, onclick: (e) => { e.stopPropagation(); togglePick(id); } }, icon('check', 15));
+    const markRows = () => {
+      body.querySelectorAll('[data-line]').forEach((el) => el.classList.toggle('on', state.repSel.has(el.getAttribute('data-line'))));
+      const ids = Array.from(state.repSel).filter((id) => lineIndex.has(id));
+      selbar.hidden = !ids.length;
+      if (!ids.length) { selbar.replaceChildren(); return; }
+      let c = 0, p = 0; const names = [];
+      ids.forEach((id) => { const e = lineIndex.get(id); const sg = e.s.kind === 'inc' ? 1 : 1; c += e.l.cur * sg; p += e.l.prev * sg; names.push(e.l.name); });
+      selbar.replaceChildren(h('b', null, ids.length + ' lines (줄)'), h('b', { id: 'rep-sel-sum' }, fmt(L.round(c, 2))),
+        h('span', { class: 'nms' }, names.join(', ')),
+        h('span', null, plab[0] + ' ' + fmt(L.round(p, 2))),
+        h('button', { type: 'button', class: 'btn', id: 'rep-sel-view', onclick: () => D() && drill.show(D(), { key: 'multi:' + ids.join(',') + curMs.join(','), title: ids.length + ' lines (줄)', sub: rangeLabel(curMs), months: curMs, ids, mode: 'exp', totalLabel: 'Selected total (선택 합계)', addDefaults: {} }) }, 'View (거래 보기)'),
+        h('button', { type: 'button', class: 'btn ghost', id: 'rep-sel-clear', onclick: () => { state.repSel.clear(); markRows(); } }, 'Clear (해제)'));
     };
-    section('Assets (자산)', b.assets, b.totalAssets);
-    section('Credit & loans (카드 · 대출)', b.liabilities, b.totalLiab);
-    box.append(h('details', { class: 'card', id: 'rep-equity' },
-      h('summary', null, 'Equity (자본) · ' + fmt(b.equityTotal)),
-      b.equityLines.map((l) => h('div', { class: 'row-sub' }, l.name + ': ' + fmt(l.amount))),
-      h('div', { class: 'row-sub' }, 'Cumulative net income (누적 순수입): ' + fmt(b.retained))));
-    if (Math.abs(b.diff) > 0.01) {
-      box.append(h('div', { class: 'card warn-card', id: 'rep-diff', role: 'alert' },
-        'Books out of balance by ' + fmt(b.diff) + ' (장부가 맞지 않습니다: 자산 − 부채 ≠ 자본). Check opening balances and recent edits (기초잔액과 최근 수정 내역을 확인하세요).'));
+    const togglePick = (id) => { if (state.repSel.has(id)) state.repSel.delete(id); else state.repSel.add(id); markRows(); };
+
+    if (lay === 'phone') {
+      sections.forEach((s) => {
+        body.append(h('div', { class: 'rl-sec ' + s.cls }, h('h3', null, s.label), h('b', null, fmt(s.cur))));
+        const box = h('div', { class: 'ledger ' + s.cls });
+        const isExp = s.kind === 'exp';
+        s.lines.forEach((l) => {
+          const goodUp = !isExp;
+          box.append(h('div', { class: 'rl-row ' + s.cls, role: 'button', tabindex: '0', 'data-line': l.id, 'data-acct': l.id, onclick: () => openLine(l, s.kind, curMs), onkeydown: (e) => { if (e.key === 'Enter') openLine(l, s.kind, curMs); } },
+            pickBtn(l.id),
+            h('div', { class: 't' }, l.name),
+            h('div', { class: 'v' }, fmt(l.cur)),
+            h('div', { class: 's' }, plab[0] + ' ' + fmt(l.prev) + (l.budget ? ' · budget (예산) ' + fmt(l.budget) : '')),
+            h('div', { class: 'c' }, pctEl(l.cur, l.prev, goodUp)),
+            s.cur ? h('div', { class: 'share-bar' }, h('i', { style: 'width:' + Math.max(l.cur > 0 ? 3 : 0, Math.round(Math.abs(l.cur) / Math.max(Math.abs(s.cur), 1) * 100)) + '%' })) : null));
+        });
+        body.append(box);
+      });
+      const net = h('div', { class: 'card', id: 'rep-net' }, h('div', { class: 'rc-line strong' }, h('span', null, 'Net income (순수입)'), h('span', null, (cmp.net.cur < 0 ? '−' : '') + fmt(Math.abs(cmp.net.cur)))),
+        h('div', { class: 'rc-line' }, h('span', null, plab[0]), h('span', null, (cmp.net.prev < 0 ? '−' : '') + fmt(Math.abs(cmp.net.prev)))));
+      body.append(net);
+    } else {
+      const wide = lay === 'desktop';
+      const slim = lay === 'tablet';   // 아이패드: 오른쪽 칸이 있으므로 열을 줄입니다
+      const th = (en, ko, r) => h('th', null, en, h('span', { class: 'ko' }, ko));
+      const tr = h('tr', null, th('Account', '계정'), th(lab[0], lab[1]), slim ? null : th(plab[0], plab[1]), slim ? null : th('Change', '증감'), th('Change %', '증감률'), wide ? th('Budget', '예산') : null, wide ? th('Used', '사용률') : null);
+      const tb = h('tbody');
+      sections.forEach((s) => {
+        const isExp = s.kind === 'exp';
+        tb.append(h('tr', { class: 'sec ' + s.cls }, h('td', { colspan: wide ? 7 : slim ? 3 : 5 }, s.label)));
+        s.lines.forEach((l) => {
+          const goodUp = !isExp;
+          tb.append(h('tr', { class: 'line ' + s.cls, 'data-line': l.id, 'data-acct': l.id, onclick: (e) => openLine(l, s.kind, e.target.closest('td[data-prior]') ? prvMs : curMs) },
+            h('td', { class: 'nm' }, h('div', { class: 'nmcell' }, pickBtn(l.id), h('div', { class: 't' }, l.name, l.name_ko && l.name_ko !== l.name ? h('div', { class: 's' }, l.name_ko) : null))),
+            h('td', null, fmt(l.cur)),
+            slim ? null : h('td', { 'data-prior': '1' }, fmt(l.prev)),
+            slim ? null : h('td', null, chg(l.delta, goodUp)),
+            h('td', null, pctEl(l.cur, l.prev, goodUp)),
+            wide ? h('td', null, l.budget ? fmt(l.budget) : '') : null,
+            wide ? h('td', null, l.used !== null ? h('span', { class: 'chg ' + (l.used > 100 ? 'bad' : l.used >= 85 ? '' : 'good') }, l.used + '%') : '') : null));
+        });
+        tb.append(h('tr', { class: 'sub', 'data-sec': s.key, style: 'cursor:pointer', onclick: () => D() && drill.show(D(), { key: 'sec:' + s.key + curMs.join(','), title: s.label, sub: rangeLabel(curMs), months: curMs, ids: s.lines.map((l) => l.id), mode: s.kind === 'inc' ? 'inc' : 'exp', search: '', addDefaults: {} }) },
+          h('td', { class: 'nm' }, 'Total ' + s.label), h('td', null, fmt(s.cur)), slim ? null : h('td', null, fmt(s.prev)), slim ? null : h('td', null, chg(L.round(s.cur - s.prev, 2), !isExp)), h('td', null, pctEl(s.cur, s.prev, !isExp)),
+          wide ? h('td', null, s.budget ? fmt(s.budget) : '') : null, wide ? h('td', null, s.budget ? Math.round(s.cur / s.budget * 100) + '%' : '') : null));
+      });
+      tb.append(h('tr', { class: 'net', id: 'rep-net' }, h('td', { class: 'nm' }, 'Net income (순수입)'), h('td', null, (cmp.net.cur < 0 ? '−' : '') + fmt(Math.abs(cmp.net.cur))), slim ? null : h('td', null, (cmp.net.prev < 0 ? '−' : '') + fmt(Math.abs(cmp.net.prev))), slim ? null : h('td', null, chg(L.round(cmp.net.cur - cmp.net.prev, 2), true)), h('td', null, pctEl(cmp.net.cur, cmp.net.prev, true)), wide ? h('td') : null, wide ? h('td') : null));
+      body.append(h('div', { class: 'tbl' }, h('div', { class: 'tbl-scroll' }, h('table', { class: 'rpt', id: 'rpt-is' }, h('thead', null, tr), tb))));
+      body.append(h('div', { class: 'note' }, 'Tap a line to see its transactions; tap the circle to add lines into a running total. Tap the prior amount to see that period. (줄을 누르면 거래가 열리고, 동그라미를 누르면 여러 줄의 합계를 볼 수 있습니다. 이전 금액을 누르면 그 기간 거래가 열립니다.)'));
     }
-    return box;
+    markRows();
   }
 
-  function drawBG() {
-    const data = api.data || {};
-    const today = L.todayStr();
-    const budgets = data.budgets || [];
-    const c = B.compare(api.items, api.accMap, budgets, state.month, today);
-    const box = h('div', { id: 'rep-bg' });
-    const leftLabel = c.left >= 0 ? 'Left (남음)' : 'Over (초과)';
-    box.append(h('div', { class: 'summary' },
-      stat('Budget (예산)', fmt(c.totalBudget), ''),
-      stat('Spent (지출)', '↓ ' + fmt(c.totalActual), 'out'),
-      stat(leftLabel, (c.left >= 0 ? '▲ ' : '▼ ') + fmt(Math.abs(c.left)), c.left >= 0 ? 'in' : 'out')));
-
-    const prevCopy = B.copyFromPrevious(budgets, state.month);
-    const avg = B.suggestFromAverage(api.items, api.accMap, budgets, state.month, 3);
-    const actions = h('div', { class: 'actions bg-actions' });
-    actions.append(
-      h('button', { type: 'button', class: 'btn secondary', id: 'bg-copy', disabled: !prevCopy.size, onclick: () => confirmFill(prevCopy, 'Copy last month (전월 예산 복사)') }, 'Copy last month (전월 복사)'),
-      h('button', { type: 'button', class: 'btn secondary', id: 'bg-avg', disabled: !avg.size, onclick: () => confirmFill(avg, 'Fill from 3-month average (최근 3개월 평균으로 채우기)') }, 'Fill from average (평균으로)'));
-    box.append(actions);
-
-    if (!c.groups.length) {
-      box.append(h('div', { class: 'card center muted', id: 'bg-empty' }, 'No budget or spending this month (이번 달 예산·지출이 없습니다). Use the buttons above (위 버튼으로 시작하세요).'));
+  // ───── 재무상태 ─────
+  function drawBS() {
+    const pm = new Map(); bsPrev.assets.concat(bsPrev.liabilities).forEach((l) => pm.set(l.id, l.amount));
+    const card = (title, ko, lines, total, ptotal, isLiab) => {
+      const box = h('div', { class: 'tbl' }, h('div', { class: 'bscard-h' }, h('h3', null, title + ' ', h('span', { class: 'muted', style: 'font-weight:500;font-size:.8em' }, ko)), h('b', null, fmt(total))));
+      if (!lines.length) box.append(h('div', { class: 'dp-empty' }, '—'));
+      lines.forEach((l) => {
+        const prevAmt = pm.get(l.id) || 0;
+        const delta = L.round(l.amount - prevAmt, 2);
+        box.append(h('button', { type: 'button', class: 'bsrow', 'data-acct': l.id, onclick: () => D() && drill.show(D(), { key: 'acct:' + l.id + ':' + month, title: l.name, sub: L.monthLabel(month) + ' activity (이번 달 거래)', months: [month], ids: [l.id], mode: 'acct', acctType: isLiab ? 'LIABILITY' : 'ASSET', search: l.name, totalLabel: 'Net change this month (이번 달 순증감)', addDefaults: isLiab ? { fromId: l.id } : { fromId: l.id } }) },
+          h('span', { class: 'ic-wrap', style: 'color:var(--green-ink)' }, icon(isLiab ? 'accounts' : 'balance', 22)),
+          h('span', { class: 't' }, l.name, l.owner ? h('div', { class: 's' }, l.owner) : null),
+          h('span', { class: 'v' }, fmt(l.amount)),
+          h('span', { class: 'c' }, chg(delta, !isLiab))));
+      });
+      box.append(h('div', { class: 'bstot' }, h('span', null, 'Total ' + title), h('span', null, fmt(total))));
       return box;
+    };
+    const two = h('div', { class: 'bsgrid two' },
+      card('Assets', '자산', bs.assets, bs.totalAssets, bsPrev.totalAssets, false),
+      card('Credit & loans', '카드 · 대출', bs.liabilities, bs.totalLiab, bsPrev.totalLiab, true));
+    body.append(two);
+    const dn = L.round(bs.net - bsPrev.net, 2);
+    body.append(h('div', { class: 'card', id: 'rep-networth' },
+      h('div', { class: 'rc-line strong' }, h('span', null, 'Net worth (순자산)'), h('span', null, (bs.net < 0 ? '−' : '') + fmt(Math.abs(bs.net)))),
+      h('div', { class: 'rc-line' }, h('span', null, 'Last month (전월)'), h('span', null, (bsPrev.net < 0 ? '−' : '') + fmt(Math.abs(bsPrev.net)))),
+      h('div', { class: 'rc-line' }, h('span', null, 'Change (증감)'), chg(dn, true))));
+    body.append(h('details', { class: 'card', id: 'rep-equity' },
+      h('summary', null, 'Equity (자본) · ' + fmt(bs.equityTotal)),
+      bs.equityLines.map((l) => h('div', { class: 'row-sub' }, l.name + ': ' + fmt(l.amount))),
+      h('div', { class: 'row-sub' }, 'Cumulative net income (누적 순수입): ' + fmt(bs.retained))));
+    if (Math.abs(bs.diff) > 0.01) {
+      body.append(h('div', { class: 'card warn-card', id: 'rep-diff', role: 'alert' },
+        'Books out of balance by ' + fmt(bs.diff) + ' (장부가 맞지 않습니다: 자산 − 부채 ≠ 자본). Check opening balances and recent edits (기초잔액과 최근 수정 내역을 확인하세요).'));
+    }
+  }
+
+  // ───── 예산 ─────
+  function drawBG() {
+    const c = bg;
+    const prevCopy = B.copyFromPrevious(api.data.budgets || [], month);
+    const avg = B.suggestFromAverage(api.items, api.accMap, api.data.budgets || [], month, 3);
+    body.append(h('div', { class: 'bg-actions' },
+      h('button', { type: 'button', class: 'btn secondary', id: 'bg-copy', disabled: !prevCopy.size, onclick: () => confirmFill(prevCopy, 'Copy last month (전월 예산 복사)') }, icon('sheet', 18), 'Copy last month (전월 복사)'),
+      h('button', { type: 'button', class: 'btn secondary', id: 'bg-avg', disabled: !avg.size, onclick: () => confirmFill(avg, 'Fill from 3-month average (최근 3개월 평균으로 채우기)') }, icon('spark', 18), 'Fill from average (평균으로 채우기)')));
+    if (!c.groups.length) {
+      body.append(h('div', { class: 'card center muted', id: 'bg-empty' }, 'No budget or spending this month (이번 달 예산·지출이 없습니다). Use the buttons above (위 버튼으로 시작하세요).'));
+      return;
     }
     if (c.hasBudget) {
-      box.append(bar(c.pct === null ? 0 : c.pct, c.status, c.paceFraction, 'bg-total'));
+      body.append(bar(c.pct === null ? 0 : c.pct, c.status, c.paceFraction, 'bg-total'));
       const pace = c.paceFraction !== null ? ' · Day ' + Number(today.slice(8, 10)) + ' (오늘까지 ' + Math.round(c.paceFraction * 100) + '% 경과)' : '';
-      box.append(h('div', { class: 'note' }, c.pct + '% used (사용) ' + pace));
+      body.append(h('div', { class: 'note' }, c.pct + '% used (사용) ' + pace));
     }
-    if (c.unbudgeted > 0) box.append(h('div', { class: 'note' }, 'No budget yet for ' + fmt(c.unbudgeted) + ' of spending (예산이 없는 지출). Tap a row to set one (눌러서 설정).'));
+    if (c.unbudgeted > 0) body.append(h('div', { class: 'note' }, 'No budget yet for ' + fmt(c.unbudgeted) + ' of spending (예산이 없는 지출). Tap a row to set one (눌러서 설정).'));
+    const cols = h('div', { class: 'bg-cols' });
     c.groups.forEach((g) => {
       const gc = L.GROUP_CLASS[g.key] || '';
-      box.append(h('h2', { class: 'sect grp ' + gc }, g.label + ' · ' + fmt(g.actual) + ' / ' + fmt(g.budget)));
-      const led = h('div', { class: 'ledger' });
-      g.lines.forEach((l) => led.append(h('button', { type: 'button', class: 'row bg-row ' + gc, 'data-acct': l.id, onclick: () => openEditor(l) },
-        h('div', { class: 'row-main' },
-          h('div', { class: 'row-title' }, l.name),
-          h('div', { class: 'row-sub' }, l.budget ? fmt(l.actual) + ' of ' + fmt(l.budget) + ' (' + l.pct + '%)' : fmt(l.actual) + ' — no budget (예산 없음)'),
-          l.budget ? bar(Math.min(l.pct, 100), l.status, c.paceFraction, '') : null),
-        h('div', { class: 'row-right' },
-          l.budget ? h('div', { class: 'row-amt ' + (l.left >= 0 ? 'in' : 'out') }, (l.left >= 0 ? '' : '−') + fmt(Math.abs(l.left))) : h('div', { class: 'row-amt move' }, '+ Set (설정)'),
-          l.budget ? h('div', { class: 'row-fx' }, l.left >= 0 ? 'left (남음)' : 'over (초과)') : null))));
-      box.append(led);
+      const sec = h('div', null, h('h2', { class: 'sect grp ' + gc }, g.label + ' · ' + fmt(g.actual) + ' / ' + fmt(g.budget)));
+      const led = h('div', { class: 'bg-list' });
+      g.lines.forEach((l) => led.append(h('div', { class: 'bg-item' },
+        h('button', { type: 'button', class: 'row bg-row ' + gc, 'data-acct': l.id, onclick: () => openEditor(l) },
+          h('div', { class: 'row-main' },
+            h('div', { class: 'row-title' }, l.name),
+            h('div', { class: 'row-sub' }, l.budget ? fmt(l.actual) + ' of ' + fmt(l.budget) + ' (' + l.pct + '%)' : fmt(l.actual) + ' — no budget (예산 없음)'),
+            l.budget ? bar(Math.min(l.pct, 100), l.status, c.paceFraction, '') : null),
+          h('div', { class: 'row-right' },
+            l.budget ? h('div', { class: 'row-amt ' + (l.left >= 0 ? 'in' : 'out') }, (l.left >= 0 ? '' : '−') + fmt(Math.abs(l.left))) : h('div', { class: 'row-amt move' }, '+ Set (설정)'),
+            l.budget ? h('div', { class: 'row-fx' }, l.left >= 0 ? 'left (남음)' : 'over (초과)') : null)),
+        h('button', { type: 'button', class: 'rowbtn', 'aria-label': 'Transactions (거래 보기)', title: 'Transactions (거래 보기)', 'data-go': l.id,
+          onclick: () => D() && drill.show(D(), { key: 'bg:' + l.id + ':' + month, title: l.name, sub: L.monthLabel(month), months: [month], ids: [l.id], mode: 'exp', search: l.name, addDefaults: { kind: 'EXPENSE', categoryId: l.id } }) }, icon('list', 22)))));
+      sec.append(led);
+      cols.append(sec);
     });
-    return box;
+    body.append(cols);
   }
 
   function bar(pct, status, pace, id) {
@@ -246,17 +468,17 @@ export function render(api) {
     const close = () => { ov.hidden = true; ov.replaceChildren(); document.body.classList.remove('noscroll'); };
     const err = h('div', { class: 'err', id: 'bg-err', role: 'alert' });
     const amt = h('input', { type: 'text', id: 'bg-amount', inputmode: 'decimal', autocomplete: 'off', value: line.budget ? String(line.budget) : '', placeholder: 'e.g. 600' });
-    const scope = scopeSelect('bg-scope');
+    const scopeEl = scopeSelect('bg-scope');
     const doSave = async (amount) => {
-      const rows = B.setBudget(api.data.budgets || [], line.id, state.month, amount, scope.value, L.nowIso());
+      const rows = B.setBudget(api.data.budgets || [], line.id, state.month, amount, scopeEl.value, L.nowIso());
       if (!rows.length) { close(); return; }
       close(); await save(rows, amount > 0 ? 'Budget saved (예산 저장됨)' : 'Budget removed (예산 삭제됨)');
     };
     ov.replaceChildren(h('div', { class: 'backdrop' }, h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Budget' },
-      h('div', { class: 'sheet-head' }, h('h2', null, line.name), h('button', { type: 'button', class: 'icon', 'aria-label': 'Close (닫기)', onclick: close }, '✕')),
+      h('div', { class: 'sheet-head' }, h('h2', null, line.name), h('button', { type: 'button', class: 'icon', 'aria-label': 'Close (닫기)', onclick: close }, icon('close', 22))),
       h('div', { class: 'hint' }, L.monthLabel(state.month) + ' · spent so far (지금까지 지출) ' + fmt(line.actual)),
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Monthly budget (월 예산, CAD)'), amt),
-      h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Apply to (적용 범위)'), scope),
+      h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Apply to (적용 범위)'), scopeEl),
       err,
       h('div', { class: 'btnrow' },
         h('button', { type: 'button', class: 'btn', id: 'bg-save', onclick: () => {
@@ -273,15 +495,15 @@ export function render(api) {
     const ov = document.getElementById('overlay');
     ov.hidden = false; document.body.classList.add('noscroll');
     const close = () => { ov.hidden = true; ov.replaceChildren(); document.body.classList.remove('noscroll'); };
-    const scope = scopeSelect('bg-fill-scope');
+    const scopeEl = scopeSelect('bg-fill-scope');
     const names = Array.from(entries, ([id, v]) => { const a = api.accMap.get(String(id)); return (a ? a.name : id) + ' ' + fmt(v); });
     ov.replaceChildren(h('div', { class: 'backdrop' }, h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Fill budget' },
-      h('div', { class: 'sheet-head' }, h('h2', null, title), h('button', { type: 'button', class: 'icon', 'aria-label': 'Close (닫기)', onclick: close }, '✕')),
+      h('div', { class: 'sheet-head' }, h('h2', null, title), h('button', { type: 'button', class: 'icon', 'aria-label': 'Close (닫기)', onclick: close }, icon('close', 22))),
       h('div', { class: 'hint', id: 'bg-fill-list' }, entries.size + ' categories (카테고리 ' + entries.size + '개): ' + names.slice(0, 12).join(', ') + (names.length > 12 ? ' …' : '')),
-      h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Apply to (적용 범위)'), scope),
+      h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Apply to (적용 범위)'), scopeEl),
       h('div', { class: 'btnrow' },
         h('button', { type: 'button', class: 'btn', id: 'bg-fill-go', onclick: async () => {
-          const rows = B.applyMap(api.data.budgets || [], entries, state.month, scope.value, L.nowIso());
+          const rows = B.applyMap(api.data.budgets || [], entries, state.month, scopeEl.value, L.nowIso());
           close(); await save(rows, 'Budgets saved (예산 저장됨)');
         } }, 'Apply (적용)'),
         h('button', { type: 'button', class: 'btn secondary', onclick: close }, 'Cancel (취소)')))));

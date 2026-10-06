@@ -3,39 +3,51 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#42bf19" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#1c1c1c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161a15" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Home Ledger">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="icon" href="icon-192.png">
   <title>Home Ledger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="style.css">
   <script src="https://accounts.google.com/gsi/client" defer></script>
   <script type="module" src="app.js"></script>
 </head>
 <body>
   <header class="top">
-    <h1>Home Ledger <span class="sub">(우리집 장부)</span></h1>
-    <button id="chip" class="chip warn" type="button">● Sign in (로그인 필요)</button>
+    <div class="brand">
+      <span id="logo" class="brand-logo"></span>
+      <span class="brand-text"><b>Home Ledger</b><i>우리집 장부</i></span>
+    </div>
+    <div class="top-actions">
+      <button id="chip" class="chip warn" type="button">● Sign in (로그인 필요)</button>
+    </div>
   </header>
+
+  <nav class="tabs" aria-label="Main">
+    <button type="button" data-tab="txns" class="on"><span class="ico" data-ic="ledger"></span><span class="lab"><span class="en">Ledger</span><span class="ko">거래</span></span></button>
+    <button type="button" data-tab="accounts"><span class="ico" data-ic="accounts"></span><span class="lab"><span class="en">Accounts</span><span class="ko">계좌</span></span></button>
+    <button type="button" data-tab="reports"><span class="ico" data-ic="reports"></span><span class="lab"><span class="en">Reports</span><span class="ko">보고서</span></span></button>
+    <button type="button" data-tab="import"><span class="ico" data-ic="import"></span><span class="lab"><span class="en">Import</span><span class="ko">가져오기</span></span></button>
+    <button type="button" data-tab="settings"><span class="ico" data-ic="settings"></span><span class="lab"><span class="en">Settings</span><span class="ko">설정</span></span></button>
+  </nav>
 
   <main id="view"><div class="card center muted">Loading… (불러오는 중)</div></main>
 
-  <button id="fab-scan" class="fab fab-scan" type="button" aria-label="Scan receipt (영수증 스캔)">
-    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
-  </button>
-  <button id="fab" class="fab" type="button" aria-label="Add transaction (거래 추가)">+</button>
+  <!-- 예전 떠 있는 버튼 (화면에는 나오지 않지만 기존 연결을 위해 남겨 둡니다) -->
+  <button id="fab-scan" class="fab fab-scan" type="button" aria-label="Scan receipt (영수증 스캔)" hidden></button>
+  <button id="fab" class="fab" type="button" aria-label="Add transaction (거래 추가)" hidden>+</button>
 
-  <nav class="tabs" aria-label="Main">
-    <button type="button" data-tab="txns" class="on"><span class="en">Ledger</span><span class="ko">거래</span></button>
-    <button type="button" data-tab="accounts"><span class="en">Accounts</span><span class="ko">계좌</span></button>
-    <button type="button" data-tab="reports"><span class="en">Reports</span><span class="ko">보고서</span></button>
-    <button type="button" data-tab="import"><span class="en">Import</span><span class="ko">가져오기</span></button>
-    <button type="button" data-tab="settings"><span class="en">Settings</span><span class="ko">설정</span></button>
-  </nav>
-
+  <div id="drawer" class="drawer" hidden>
+    <div class="drawer-scrim" id="drawer-scrim"></div>
+    <aside class="drawer-panel" id="drawer-panel" role="dialog" aria-label="Details"></aside>
+  </div>
   <div id="overlay" hidden></div>
   <div id="toast" class="toast" hidden></div>
 </body>

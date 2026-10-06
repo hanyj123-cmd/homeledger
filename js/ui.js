@@ -7,11 +7,15 @@ import * as importui from './importui.js';
 import * as reports from './reports.js';
 import * as receiptui from './receiptui.js';
 import { openRemember } from './rememberui.js';
+import * as activity from './activity.js';
+import * as drill from './drill.js';
+import { icon, logoSvg } from './icons.js';
+import { initLayout, onLayout } from './layout.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, ccy) => L.fmtMoney(n, ccy);
 
-export const state = { tab: 'txns', month: L.monthOf(L.todayStr()), query: '', data: null, d: null };
+export const state = { tab: 'txns', month: L.monthOf(L.todayStr()), query: '', acct: '', kind: '', filterOpen: false, repSel: new Set(), data: null, d: null };
 
 // 아주 작은 DOM 도우미
 export function h(tag, attrs, ...kids) {
@@ -77,9 +81,14 @@ async function reload() {
 // ───────── 시작 ─────────
 
 export async function init() {
+  initLayout();
+  const logo = $('logo');
+  if (logo) logo.innerHTML = logoSvg(34, 'hl-logo');
+  document.querySelectorAll('.tabs [data-ic]').forEach((el) => { el.replaceChildren(icon(el.getAttribute('data-ic'), 24)); });
   document.querySelectorAll('.tabs button').forEach((b) => {
     b.addEventListener('click', () => {
       state.tab = b.getAttribute('data-tab');
+      drill.close();
       if (state.tab === 'import') importui.resetIfDone();
       renderAll();
     });
@@ -87,6 +96,8 @@ export async function init() {
   $('fab').addEventListener('click', () => openForm(null));
   $('fab-scan').addEventListener('click', () => receiptui.openScan(receiptApi()));
   $('chip').addEventListener('click', onChip);
+  $('drawer-scrim')?.addEventListener('click', () => drill.close());
+  onLayout(() => { if (state.d) renderAll(); });
   sync.onStatus(renderChip);
   sync.onData(async () => { await reload(); renderBody(); });
   auth.onAuth(() => { sync.refreshStatus().then(renderChip); });
@@ -140,15 +151,23 @@ function renderAll() {
 export function renderBody(force) {
   if (!state.d) return;
   if (!force && state.tab === 'import' && importui._state().parsed && !importui._state().done) return;
-  if (!force && state.tab === 'txns' && $('q') && document.activeElement === $('q')) { renderList(); return; }
+  if (!force && state.tab === 'txns' && $('q') && document.activeElement === $('q')) return;
   if (state.tab === 'txns') renderTxns();
   else if (state.tab === 'accounts') renderAccounts();
   else if (state.tab === 'reports') renderReports();
   else if (state.tab === 'import') renderImport();
   else renderSettings();
+  if (state.tab === 'txns' || state.tab === 'reports') drill.restore(drillApi()); else drill.close();
 }
 
-const stat = (label, value, cls) => h('div', { class: 'stat' }, h('div', { class: 'stat-l' }, label), h('div', { class: 'stat-v ' + (cls || '') + (String(value).length >= 12 ? ' long' : '') }, value));
+/** 상세 패널(drill)이 쓰는 도구 모음 */
+function drillApi() {
+  return {
+    h, fmt, toast, state, reload, renderBody,
+    openForm: (id, defaults) => openForm(id, defaults),
+    goSearch: (text) => { state.query = text; state.acct = ''; state.tab = 'txns'; drill.close(); renderAll(); }
+  };
+}
 
 function emptyState() {
   const signedIn = !!auth.getToken();
@@ -157,71 +176,28 @@ function emptyState() {
     signedIn ? null : h('button', { type: 'button', class: 'btn', onclick: doSignIn }, 'Sign in with Google (구글로 로그인)'));
 }
 
-// ───────── 거래 목록 ─────────
+/** 가져오기·계좌·설정 화면의 위쪽 초록 띠 */
+function banner(title, metrics) {
+  const m = h('div', { class: 'metrics' });
+  (metrics || []).forEach((x) => m.append(h('div', { class: 'metric' + (x.sub ? ' sub' : ''), id: x.id || null }, h('div', { class: 'metric-lab' }, x.label), h('div', { class: 'metric-val' }, x.value))));
+  return h('section', { class: 'banner nopills' }, h('div', { class: 'banner-in' },
+    h('div', { class: 'banner-row' }, h('div', { class: 'acct-pick' }, h('span', { class: 'nm' }, title))), metrics && metrics.length ? m : null));
+}
+
+// ───────── 거래 목록 (Ledger) ─────────
 
 function renderTxns() {
   const v = $('view');
   v.replaceChildren();
   if (!state.data.accounts.length) { v.append(emptyState()); return; }
-  const nav = h('div', { class: 'monthnav' },
-    h('button', { type: 'button', class: 'icon', 'aria-label': 'Previous month (이전 달)', onclick: () => { state.month = L.shiftMonth(state.month, -1); renderTxns(); } }, '‹'),
-    h('div', { class: 'monthlabel' }, L.monthLabel(state.month)),
-    h('button', { type: 'button', class: 'icon', 'aria-label': 'Next month (다음 달)', onclick: () => { state.month = L.shiftMonth(state.month, 1); renderTxns(); } }, '›'));
-  const search = h('input', {
-    type: 'search', id: 'q', placeholder: 'Search (검색): merchant, amount, account…', value: state.query,
-    oninput: (e) => { state.query = e.target.value; renderList(); }
-  });
-  const actions = h('div', { class: 'actions' },
-    h('button', { type: 'button', class: 'btn', id: 'add-btn', onclick: () => openForm(null) }, '+ New (거래 추가)'),
-    h('button', { type: 'button', class: 'btn secondary', id: 'scan-btn', onclick: () => receiptui.openScan(receiptApi()) }, '📷 Receipt (영수증)'));
-  v.append(h('div', { class: 'masthead' }, nav, h('div', { class: 'summary', id: 'summary' })), actions, search, h('div', { id: 'list' }));
-  renderList();
-}
-
-function renderList() {
-  const d = state.d;
-  const list = $('list');
-  const sum = $('summary');
-  if (!list || !sum) return;
-  const q = state.query.trim();
-  const items = q ? L.searchItems(d.items, q) : d.items.filter((it) => L.monthOf(it.txn.date) === state.month);
-  const s = L.monthSummary(d.items, d.accMap, state.month);
-  sum.replaceChildren(
-    stat('Income (수입)', '↑ ' + fmt(s.income), 'in'),
-    stat('Spending (지출)', '↓ ' + fmt(s.spending), 'out'),
-    stat('Net (순수입)', (s.net >= 0 ? '▲ ' : '▼ ') + fmt(Math.abs(s.net)), s.net >= 0 ? 'in' : 'out'));
-  list.replaceChildren();
-  if (q) list.append(h('div', { class: 'note' }, items.length + ' result(s) (검색 결과 ' + items.length + '건) — all months (전체 기간)'));
-  if (!items.length) {
-    list.append(h('div', { class: 'card center muted' }, q ? 'No matches (일치하는 거래가 없습니다)' : 'No transactions this month (이번 달 거래가 없습니다). Tap New to add (위의 버튼으로 추가)'));
-    return;
-  }
-  const CAP = 200;
-  let last = null;
-  items.slice(0, CAP).forEach((it) => {
-    if (it.txn.date !== last) { list.append(h('div', { class: 'dayhead' }, L.dayLabel(it.txn.date))); last = it.txn.date; }
-    list.append(row(it));
-  });
-  if (items.length > CAP) list.append(h('div', { class: 'note' }, 'Showing first ' + CAP + ' (처음 ' + CAP + '건만 표시)'));
-}
-
-function row(it) {
-  const t = it.txn, dsc = it.desc;
-  const title = t.merchant || t.memo || dsc.categoryName;
-  const sub = [dsc.categoryName, dsc.accountName];
-  if (t.merchant && t.memo) sub.push(t.memo);
-  const arrow = dsc.flow === 'out' ? '↓' : dsc.flow === 'in' ? '↑' : '⇄';
-  const foreign = t.currency && t.currency !== 'CAD';
-  const prov = String(t.fx_status).toUpperCase() === 'PROVISIONAL' ? '~' : '';
-  const cat = state.d.accMap.get(String(dsc.categoryId));
-  const grp = dsc.kind === 'INCOME' ? 'g-in' : dsc.kind === 'EXPENSE' ? (L.GROUP_CLASS[cat && cat.report_group] || '') : 'g-move';
-  return h('button', { type: 'button', class: 'row ' + grp, onclick: () => openForm(t.txn_id) },
-    h('div', { class: 'row-main' },
-      h('div', { class: 'row-title' }, title),
-      h('div', { class: 'row-sub' }, sub.filter(Boolean).join(' · '))),
-    h('div', { class: 'row-right' },
-      h('div', { class: 'row-amt ' + dsc.flow }, arrow + ' ' + fmt(L.num(t.total_cad))),
-      foreign ? h('div', { class: 'row-fx' }, prov + fmt(L.num(t.total_orig), t.currency)) : null));
+  v.append(activity.render({
+    h, fmt, toast, state,
+    rerender: () => renderTxns(),
+    openForm: (id, defaults) => openForm(id, defaults),
+    openScan: () => receiptui.openScan(receiptApi()),
+    goImport: () => { state.tab = 'import'; importui.resetIfDone(); drill.close(); renderAll(); },
+    drillApi
+  }));
 }
 
 // ───────── 보고서 (손익 · 재무상태) ─────────
@@ -233,8 +209,10 @@ function renderReports() {
   v.append(reports.render({
     h, fmt, toast, state, items: state.d.items, accounts: state.data.accounts, accMap: state.d.accMap, data: state.data,
     saveBudgets: async (rows) => { await sync.saveBatch({ Budgets: rows }, ['Budgets']); await reload(); renderReports(); },
-    rerender: () => renderReports(),
-    goSearch: (text) => { state.query = text; state.tab = 'txns'; renderAll(); }
+    rerender: () => { renderReports(); drill.restore(drillApi()); },
+    openForm: (id, defaults) => openForm(id, defaults),
+    goSearch: (text) => { state.query = text; state.acct = ''; state.tab = 'txns'; drill.close(); renderAll(); },
+    drillApi
   }));
 }
 
@@ -244,11 +222,14 @@ function renderImport() {
   const v = $('view');
   v.replaceChildren();
   if (!state.data.accounts.length) { v.append(emptyState()); return; }
-  v.append(importui.render({
+  v.append(banner('Import statement (명세서 가져오기)'));
+  const pg = h('div', { class: 'page imp-page' });
+  v.append(pg);
+  pg.append(importui.render({
     h, toast, state, fmt,
     accounts: state.data.accounts, accMap: state.d.accMap, data: state.data, items: state.d.items,
     reload: async () => { await reload(); },
-    goToTxns: (month) => { if (month) state.month = month; state.query = ''; state.tab = 'txns'; renderAll(); }
+    goToTxns: (month) => { if (month) state.month = month; state.query = ''; state.acct = ''; state.tab = 'txns'; renderAll(); }
   }));
 }
 
@@ -262,28 +243,31 @@ function renderAccounts() {
   const accounts = state.data.accounts.filter(L.isActive);
   const bal = L.accountBalances(accounts, d.items.flatMap((i) => i.ps));
   const nw = L.netWorth(accounts, bal);
-  v.append(h('div', { class: 'masthead' }, h('div', { class: 'summary' },
-    stat('Assets (자산)', fmt(nw.assets), ''),
-    stat('Debts (부채)', fmt(nw.liabilities), ''),
-    stat('Net worth (순자산)', (nw.net >= 0 ? '▲ ' : '▼ ') + fmt(Math.abs(nw.net)), nw.net >= 0 ? 'in' : 'out'))));
+  v.append(banner('Accounts (계좌)', [
+    { label: 'Net worth (순자산)', value: (nw.net < 0 ? '−' : '') + fmt(Math.abs(nw.net)), id: 'ac-net' },
+    { label: 'Assets (자산)', value: fmt(nw.assets), sub: true },
+    { label: 'Debts (부채)', value: fmt(nw.liabilities), sub: true }]));
+  const pg = h('div', { class: 'page' });
+  v.append(pg);
   if (!d.items.length) {
-    v.append(h('div', { class: 'card muted' }, 'Start with opening balances (먼저 기초잔액을 입력하세요): + → Opening (기초잔액). Balances are computed from your transactions (잔액은 입력한 거래로 계산됩니다).'));
+    pg.append(h('div', { class: 'card muted' }, 'Start with opening balances (먼저 기초잔액을 입력하세요): New → Opening (기초잔액). Balances are computed from your transactions (잔액은 입력한 거래로 계산됩니다).'));
   }
   [['ASSET', 'Assets (자산)'], ['LIABILITY', 'Credit & loans (카드 · 대출)']].forEach((g) => {
     const list = accounts.filter((a) => a.type === g[0]);
     if (!list.length) return;
-    v.append(h('h2', { class: 'sect' }, g[1]));
-    const ledger = h('div', { class: 'ledger' });
-    v.append(ledger);
+    pg.append(h('h2', { class: 'sect' }, g[1]));
+    const grid = h('div', { class: 'acc-grid' });
+    pg.append(grid);
     list.forEach((a) => {
       const b = bal.get(String(a.account_id)) || 0;
-      ledger.append(h('button', {
-        type: 'button', class: 'row acc', onclick: () => { state.query = a.name; state.tab = 'txns'; renderAll(); }
+      grid.append(h('button', {
+        type: 'button', class: 'acc-card' + (a.type === 'LIABILITY' ? ' liab' : ''), 'data-acct': a.account_id,
+        onclick: () => { state.acct = String(a.account_id); state.query = ''; state.kind = ''; state.tab = 'txns'; drill.close(); renderAll(); }
       },
-      h('div', { class: 'row-main' },
-        h('div', { class: 'row-title' }, L.accLabel(a)),
-        h('div', { class: 'row-sub' }, [a.owner, a.institution].filter(Boolean).join(' · '))),
-      h('div', { class: 'row-right' }, h('div', { class: 'row-amt ' + (b === 0 ? 'move' : '') }, fmt(b)))));
+      h('div', { class: 'ty' }, a.type === 'LIABILITY' ? 'Credit / loan' : 'Account'),
+      h('div', { class: 'nm' }, L.accLabel(a)),
+      h('div', { class: 'ow' }, [a.owner, a.institution].filter(Boolean).join(' · ') || '\u00a0'),
+      h('div', { class: 'bl' }, fmt(b))));
     });
   });
 }
@@ -296,26 +280,30 @@ function renderSettings() {
   const st = sync.getStatus();
   const au = auth.getState();
   const last = st.lastSync ? new Date(st.lastSync).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }) : '—';
-  v.append(
-    h('h2', { class: 'sect' }, 'Account (계정)'),
-    h('div', { class: 'card' },
-      h('div', null, au.signedIn ? 'Signed in (로그인됨): ' + (au.email || '') : 'Not signed in (로그인 안 됨)'),
-      h('div', { class: 'muted' }, 'Last sync (마지막 동기화): ' + last + ' · Pending (대기): ' + st.pending),
-      st.error ? h('div', { class: 'err' }, st.error) : null,
-      h('div', { class: 'btnrow' },
-        au.signedIn
-          ? h('button', { type: 'button', class: 'btn', onclick: () => sync.sync() }, 'Sync now (지금 동기화)')
-          : h('button', { type: 'button', class: 'btn', onclick: doSignIn }, 'Sign in (로그인)'),
-        au.signedIn ? h('button', { type: 'button', class: 'btn secondary', onclick: () => { auth.signOut(); renderAll(); } }, 'Sign out (로그아웃)') : null)),
-    h('h2', { class: 'sect' }, 'Data (데이터)'),
-    h('div', { class: 'card' },
-      h('div', { class: 'btnrow' },
-        h('button', {
-          type: 'button', class: 'btn secondary',
-          onclick: () => { if (window.confirm('Reload everything from the sheet? (시트에서 전부 다시 불러올까요?) 전송 대기 중인 항목은 유지됩니다.')) sync.reloadFromSheet(); }
-        }, 'Reload from sheet (시트에서 다시 불러오기)'),
-        h('a', { class: 'btn secondary', href: 'https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID + '/edit', target: '_blank', rel: 'noopener' }, 'Open Google Sheet (시트 열기)'))),
+  v.append(banner('Settings (설정)'));
+  const pg = h('div', { class: 'page' }, h('div', { class: 'settings-grid' },
+    h('div', null,
+      h('h2', { class: 'sect' }, 'Account (계정)'),
+      h('div', { class: 'card' },
+        h('div', null, au.signedIn ? 'Signed in (로그인됨): ' + (au.email || '') : 'Not signed in (로그인 안 됨)'),
+        h('div', { class: 'muted' }, 'Last sync (마지막 동기화): ' + last + ' · Pending (대기): ' + st.pending),
+        st.error ? h('div', { class: 'err' }, st.error) : null,
+        h('div', { class: 'btnrow' },
+          au.signedIn
+            ? h('button', { type: 'button', class: 'btn', onclick: () => sync.sync() }, 'Sync now (지금 동기화)')
+            : h('button', { type: 'button', class: 'btn', onclick: doSignIn }, 'Sign in (로그인)'),
+          au.signedIn ? h('button', { type: 'button', class: 'btn secondary', onclick: () => { auth.signOut(); renderAll(); } }, 'Sign out (로그아웃)') : null))),
+    h('div', null,
+      h('h2', { class: 'sect' }, 'Data (데이터)'),
+      h('div', { class: 'card' },
+        h('div', { class: 'btnrow' },
+          h('button', {
+            type: 'button', class: 'btn secondary',
+            onclick: () => { if (window.confirm('Reload everything from the sheet? (시트에서 전부 다시 불러올까요?) 전송 대기 중인 항목은 유지됩니다.')) sync.reloadFromSheet(); }
+          }, 'Reload from sheet (시트에서 다시 불러오기)'),
+          h('a', { class: 'btn secondary', href: 'https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID + '/edit', target: '_blank', rel: 'noopener' }, 'Open Google Sheet (시트 열기)'))))),
     h('div', { class: 'muted small' }, 'Home Ledger v' + CONFIG.APP_VERSION));
+  v.append(pg);
 }
 
 // ───────── 거래 입력/수정 폼 ─────────
@@ -324,7 +312,7 @@ const KIND_LABELS = [['EXPENSE', 'Expense (지출)'], ['INCOME', 'Income (수입
 
 const receiptApi = () => ({ h, toast, state, fmt, reload, renderBody });
 
-export function openForm(txnId) {
+export function openForm(txnId, defaults) {
   if (txnId && receiptui.isReceiptTxn(state, txnId)) { receiptui.openEdit(receiptApi(), txnId); return; }
   const d = state.d;
   const data = state.data;
@@ -335,6 +323,12 @@ export function openForm(txnId) {
     f = L.newForm();
     try { f.fromId = localStorage.getItem('hl_last_from') || ''; } catch (e) { /* ignore */ }
     if (!d.accMap.has(String(f.fromId))) f.fromId = '';
+    const df = defaults || {};
+    if (df.kind) f.kind = df.kind;
+    if (df.fromId) f.fromId = String(df.fromId);
+    if (df.toId) f.toId = String(df.toId);
+    if (df.date) f.date = df.date;
+    if (df.categoryId) { f.categoryId = String(df.categoryId); f.categoryTouched = true; }
   }
   const ov = $('overlay');
   ov.hidden = false;
@@ -519,7 +513,7 @@ export function openForm(txnId) {
       h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Transaction form' },
         h('div', { class: 'sheet-head' },
           h('h2', null, existing ? 'Edit transaction (거래 수정)' : 'New transaction (새 거래)'),
-          h('button', { type: 'button', class: 'icon', 'aria-label': 'Close (닫기)', onclick: close }, '✕')),
+          h('button', { type: 'button', class: 'icon', 'aria-label': 'Close (닫기)', onclick: close }, icon('close', 22))),
         h('datalist', { id: 'merchants' }, merchants.map((m) => h('option', { value: m }))),
         rows));
   }
