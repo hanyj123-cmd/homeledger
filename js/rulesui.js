@@ -84,19 +84,36 @@ export function presetRows(plan, selected, choices, rules, now) {
  * 직접 만든 새 규칙 → 저장할 행. 같은 패턴이 이미 있으면 그 규칙의 분류(와 소유자)만 바꿉니다.
  * 반환: { row, mode:'new'|'update'|'same' } 또는 { error }
  */
-export function newRuleRow(rules, pattern, accountId, owner, now) {
+export function newRuleRow(rules, pattern, accountId, owner, now, match) {
   const norm = L.normMerchant(pattern);
   if (!norm) return { error: '패턴(가맹점 이름)을 입력하세요. 글자나 숫자가 있어야 합니다.' };
   if (!accountId) return { error: '카테고리를 선택하세요.' };
   const own = OWNERS.indexOf(owner) >= 0 ? owner : '';
-  const existing = (rules || []).find((r) => !L.truthy(r.deleted) && L.normMerchant(r.pattern) === norm);
+  const starts = match === 'starts' || /^\s*\^/.test(String(pattern));
+  const pat = (starts ? '^' : '') + norm;
+  const key = L.ruleKey(pat);
+  const existing = (rules || []).find((r) => !L.truthy(r.deleted) && L.ruleKey(r.pattern) === key);
   if (existing) {
     if (String(existing.account_id) === String(accountId) && String(existing.owner || '') === own) return { mode: 'same', row: existing };
-    const row = L.learnRule(rules, pattern, accountId, now);
-    return { mode: 'update', row: Object.assign({}, row, { hit_count: L.num(existing.hit_count), owner: own, source: existing.source || 'MANUAL' }) };
+    return { mode: 'update', row: Object.assign({}, existing, { account_id: String(accountId), owner: own, source: existing.source || 'MANUAL', updated_at: now, deleted: false }) };
   }
-  const row = L.learnRule(rules, pattern, accountId, now);
-  return { mode: 'new', row: Object.assign({}, row, { hit_count: 0, owner: own, source: 'MANUAL' }) };
+  const row = L.learnRule(starts ? [] : (rules || []).filter((r) => !L.isStartsRule(r)), norm, accountId, now);
+  return { mode: 'new', row: Object.assign({}, row, { pattern: pat, hit_count: 0, owner: own, source: 'MANUAL' }) };
+}
+
+/** 이 규칙에 걸리는 기존 거래 id (가맹점 이름 또는 은행 원문 기준, 카테고리가 이미 같은 것은 제외) */
+export function matchingTxnIds(items, rule) {
+  const out = [];
+  (items || []).forEach((it) => {
+    const t = it.txn;
+    if (L.truthy(t.deleted)) return;
+    const hit = L.ruleMatches(rule, L.normMerchant(t.merchant)) || L.ruleMatches(rule, L.normMerchant(t.merchant_raw));
+    if (!hit) return;
+    const d = it.desc || it.d || {};
+    if (d.categoryId && String(d.categoryId) === String(rule.account_id)) return;
+    out.push(String(t.txn_id));
+  });
+  return out;
 }
 
 /** 목록: 삭제 안 된 규칙을 많이 쓴 순 → 이름순. q 는 패턴·카테고리·소유자·출처에서 찾음 */
@@ -117,8 +134,8 @@ export const isPassthroughRule = (r) => L.truthy(r.is_passthrough) || String(r.a
 // ───────── 화면 ─────────
 
 // 다시 그려져도(저장하면 화면이 새로 만들어집니다) 검색어·펼침 상태가 남도록 모듈에 보관
-const S = { q: '', shown: PAGE, sel: null, choices: new Map(), presetOpen: false, newOwner: '' };
-export function __resetRulesState() { S.q = ''; S.shown = PAGE; S.sel = null; S.choices = new Map(); S.presetOpen = false; S.newOwner = ''; }
+const S = { q: '', shown: PAGE, sel: null, choices: new Map(), presetOpen: false, newOwner: '', match: 'contains', applyOld: true };
+export function __resetRulesState() { S.q = ''; S.shown = PAGE; S.sel = null; S.choices = new Map(); S.presetOpen = false; S.newOwner = ''; S.match = 'contains'; S.applyOld = true; }
 
 /** 카테고리 드롭다운 <select>. 지출(그룹별) · 수입 · 전달 자금. 현재 값이 목록에 없어도 그대로 보이게 합니다. */
 export function catSelect(api, sel, attrs) {
@@ -147,7 +164,7 @@ export function catSelect(api, sel, attrs) {
 }
 
 const ownerSelect = (h, sel, attrs) => h('select', Object.assign({ 'aria-label': 'Owner (소유자)' }, attrs || {}),
-  h('option', { value: '', selected: !sel }, 'Any owner (상관없음)'), OWNERS.map((o) => h('option', { value: o, selected: o === sel }, o)));
+  h('option', { value: '', selected: !sel }, 'Any owner (상관없음)'), OWNERS.map((o) => h('option', { value: o, selected: o === sel }, L.ownerLabel(o))));
 
 async function saveRows(api, rows, okMsg) {
   try {
@@ -168,7 +185,7 @@ export function rulesCard(api) {
   const total = ruleList(rules, accMap, '').length;
 
   const head = h('div', { class: 'set-h' }, h('span', { class: 'set-ic' }, icon('tag', 22)), h('h2', null, 'Auto-categorize rules ', h('span', { class: 'ko' }, '(자동 분류 규칙)')));
-  const intro = h('p', { class: 'set-note' }, 'When a merchant name contains a pattern, that category is suggested (가게 이름에 패턴이 들어 있으면 그 카테고리를 자동으로 추천합니다). Names are compared in lowercase without symbols; the longest pattern wins (소문자·기호 제거 후 비교, 가장 긴 패턴이 우선).');
+  const intro = h('p', { class: 'set-note' }, 'When a merchant name contains or starts with a word, that category is used automatically, e.g. starts with TGTG → Coffee (가게 이름에 단어가 들어 있거나 그 단어로 시작하면 자동으로 그 카테고리로 분류해요. 예: TGTG 로 시작 → 카페). Upper/lower case and symbols are ignored; the longest word wins (대소문자·기호는 무시, 가장 긴 단어가 우선).');
 
   // ── 목록
   const listBox = h('div', { class: 'rule-list', id: 'rule-list' });
@@ -184,7 +201,8 @@ export function rulesCard(api) {
     const pass = isPassthroughRule(r);
     const save = (patch, msg) => saveRows(api, [Object.assign({}, r, patch, { updated_at: L.nowIso(), deleted: false })], msg);
     return h('div', { class: 'rule-row', 'data-rule': r.rule_id },
-      h('div', { class: 'rr-pat' }, h('b', { class: 'rr-p' }, r.pattern),
+      h('div', { class: 'rr-pat' }, h('b', { class: 'rr-p' }, String(r.pattern).replace(/^\s*\^/, '')),
+        L.isStartsRule(r) ? h('span', { class: 'set-tag starts' }, 'Starts with (~로 시작)') : h('span', { class: 'set-tag dim' }, 'Contains (포함)'),
         pass ? h('span', { class: 'set-tag pass' }, 'Passthrough (전달 자금)') : null,
         h('span', { class: 'set-tag' }, hits + '× used (적중)'),
         r.source ? h('span', { class: 'set-tag dim' }, String(r.source).toLowerCase()) : null),
@@ -215,26 +233,60 @@ export function rulesCard(api) {
   // ── 새 규칙
   const newPat = h('input', {
     type: 'text', id: 'rule-new-pat', placeholder: 'e.g. Costco  (가맹점 이름 일부)', autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Pattern (패턴)',
-    oninput: () => { const n = L.normMerchant(newPat.value); normHint.textContent = n ? 'Saved as (저장 형태): "' + n + '"' + (n.length < 3 ? ' — 3 letters or fewer only matches the exact name (3글자 미만은 이름이 똑같을 때만 걸려요)' : '') : ''; }
+    oninput: () => { preview(); const n = L.normMerchant(newPat.value); normHint.textContent = n ? 'Saved as (저장 형태): "' + n + '"' + (n.length < 3 ? ' — 3 letters or fewer only matches the exact name (3글자 미만은 이름이 똑같을 때만 걸려요)' : '') : ''; }
   });
   const normHint = h('div', { class: 'hint', id: 'rule-new-hint' });
   const newCat = catSelect(api, '', { id: 'rule-new-cat' });
   const newOwn = ownerSelect(h, S.newOwner, { id: 'rule-new-own', onchange: (e) => { S.newOwner = e.target.value; } });
   const newErr = h('div', { class: 'err', id: 'rule-new-err', role: 'alert' });
+  if (!S.match) S.match = 'contains';
+  if (S.applyOld === undefined) S.applyOld = true;
+  const matchSeg = h('div', { class: 'segtd rule-match', id: 'rule-new-match', role: 'radiogroup', 'aria-label': 'Match (맞추는 방법)' });
+  const drawMatch = () => matchSeg.replaceChildren(...[['contains', 'Contains (포함)'], ['starts', 'Starts with (~로 시작)']].map(([v, lab]) => h('button', {
+    type: 'button', role: 'radio', class: S.match === v ? 'on' : '', 'aria-checked': String(S.match === v), 'data-match': v,
+    onclick: () => { S.match = v; drawMatch(); preview(); }
+  }, lab)));
+  const previewEl = h('div', { class: 'hint', id: 'rule-new-preview', role: 'status' });
+  const applyBox = h('input', { type: 'checkbox', id: 'rule-new-apply', checked: S.applyOld, onchange: (e) => { S.applyOld = e.target.checked; } });
+  const draftRule = () => ({ pattern: (S.match === 'starts' ? '^' : '') + L.normMerchant(newPat.value), account_id: newCat.value });
+  function preview() {
+    const n = L.normMerchant(newPat.value);
+    if (!n) { previewEl.textContent = ''; return; }
+    const all = matchingTxnIds(api.items, Object.assign(draftRule(), { account_id: '__none__' })).length;
+    previewEl.textContent = all ? all + ' existing transactions match (기존 거래 ' + all + '건이 해당돼요)' : 'No existing transactions match yet (아직 해당하는 거래가 없어요)';
+  }
+  drawMatch();
   async function addRule() {
-    const res = newRuleRow(rules, newPat.value, newCat.value, newOwn.value, L.nowIso());
+    const res = newRuleRow(rules, newPat.value, newCat.value, newOwn.value, L.nowIso(), S.match);
     if (res.error) { newErr.textContent = res.error; return; }
-    if (res.mode === 'same') { newErr.textContent = 'This rule already exists (이미 같은 규칙이 있어요).'; return; }
+    const ids = S.applyOld ? matchingTxnIds(api.items, res.row) : [];
+    if (res.mode === 'same' && !ids.length) { newErr.textContent = 'This rule already exists (이미 같은 규칙이 있어요).'; return; }
     newErr.textContent = '';
+    let plan = null;
+    if (ids.length) {
+      const B = await import('./bulk.js');
+      const patch = { categoryId: String(res.row.account_id) };
+      if (res.row.owner) patch.owner = res.row.owner;
+      plan = B.planBulk(api.items, ids, patch, accMap, L.nowIso());
+      const b = B.batchOf(plan, res.mode === 'same' ? [] : [res.row], false);
+      try {
+        await api.saveBatch(b.puts, b.order);
+        api.toast((res.mode === 'same' ? '' : 'Rule added (규칙을 추가했어요) · ') + plan.changed + ' existing changed (기존 거래 ' + plan.changed + '건 변경)' + (plan.skipped.length ? ' · skipped ' + plan.skipped.length + ' (건너뜀 ' + plan.skipped.length + ')' : ''));
+        S.q = '';
+      } catch (e) { api.toast('저장하지 못했습니다: ' + (e && e.message ? e.message : e)); }
+      return;
+    }
     const ok = await saveRows(api, [res.row], res.mode === 'update' ? 'Existing rule updated (기존 규칙의 분류를 바꿨어요)' : 'Rule added (규칙을 추가했어요)');
     if (ok) { S.q = ''; }
   }
   const addBox = h('div', { class: 'rule-add' },
     h('h3', { class: 'set-sub' }, 'Add a rule (새 규칙 추가)'),
-    h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Pattern (패턴 · 가맹점 이름 일부)'), newPat, normHint),
+    h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'Match (맞추는 방법)'), matchSeg),
+    h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Word (단어 · 가맹점 이름 일부, 예: TGTG)'), newPat, normHint, previewEl),
     h('div', { class: 'two-set' },
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Category (카테고리)'), newCat),
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Owner (소유자, 옵션)'), newOwn)),
+    h('label', { class: 'check rule-apply' }, applyBox, ' Also change matching past transactions (해당하는 기존 거래도 바꾸기)'),
     newErr,
     h('div', { class: 'btnrow' }, h('button', { type: 'button', class: 'btn', id: 'rule-add', onclick: addRule }, icon('plus', 18), 'Add rule (규칙 추가)')));
 

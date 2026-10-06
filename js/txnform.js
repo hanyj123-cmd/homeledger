@@ -14,6 +14,10 @@ import * as auth from './auth.js';
 import * as fx from './fx.js';
 import { icon } from './icons.js';
 import { openRemember } from './rememberui.js';
+import { lang } from './prefs.js';
+
+// 소유자 버튼 글자: 둘 다 보기면 한글(굵게) + 영어(작게), 아니면 고른 언어 하나
+const ownerKids = (o) => (lang() === 'both' && L.OWNER_KO[o] ? [(() => { const b = document.createElement('b'); b.textContent = L.OWNER_KO[o]; return b; })(), (() => { const s = document.createElement('small'); s.textContent = o; return s; })()] : L.ownerLabel(o));
 
 const KIND_LABELS = [['EXPENSE', 'Expense (지출)'], ['INCOME', 'Income (수입)'], ['TRANSFER', 'Transfer (이체)'], ['OPENING', 'Opening (기초잔액)']];
 const $ = (id) => document.getElementById(id);
@@ -167,7 +171,7 @@ export function openForm(api, txnId, defaults) {
   const autoOwner = (accId) => {
     if (f.ownerTouched) return;
     const a = d.accMap.get(String(accId));
-    if (a && (a.owner === 'Patrick' || a.owner === 'Ms Kim')) f.owner = a.owner;
+    // 소유자는 기본 Joint (계좌 소유자로 바꾸지 않음)
   };
 
   // ── 작은 부품
@@ -385,7 +389,7 @@ export function openForm(api, txnId, defaults) {
         if (splitOn()) f.lines.forEach((l) => { if (l.owner === was) l.owner = o; });
         draw();
       }
-    }, o)));
+    }, ownerKids(o))));
     const ownKids = [h('div', { class: 'field txf-f wide' }, lbl(splitOn() ? 'Owner — new lines use this (소유자 · 새 줄 기본값)' : 'Owner (소유자)', 'people'), ownerSeg,
       h('input', { type: 'hidden', id: 'f-owner', value: f.owner }))];
     if (isCatKind()) {
@@ -481,7 +485,7 @@ export function openForm(api, txnId, defaults) {
         h('select', {
           class: 'sl-own', id: 'f-sl-own-' + i, 'aria-label': 'Line ' + (i + 1) + ' owner (' + (i + 1) + '번째 줄 소유자)',
           onchange: (e) => { ln.owner = e.target.value; }
-        }, CONFIG.OWNERS.map((o) => h('option', { value: o, selected: o === ln.owner }, o))),
+        }, CONFIG.OWNERS.map((o) => h('option', { value: o, selected: o === ln.owner }, L.ownerLabel(o)))),
         h('input', {
           type: 'text', class: 'sl-memo', id: 'f-sl-memo-' + i, value: ln.memo || '', autocomplete: 'off', enterkeyhint: 'done',
           placeholder: 'Memo (메모)', 'aria-label': 'Line ' + (i + 1) + ' memo (' + (i + 1) + '번째 줄 메모)',

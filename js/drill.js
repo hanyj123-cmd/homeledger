@@ -8,6 +8,7 @@ import { icon } from './icons.js';
 import { layoutOf } from './layout.js';
 import * as receiptui from './receiptui.js';
 import { openRemember } from './rememberui.js';
+import * as X from './xfermatch.js';
 
 let cur = null;            // { api, spec, picked:Set, pickMode }
 let dock = null;           // { el, fallback }  (아이패드 전용)
@@ -66,8 +67,10 @@ const isSimple = (state, it) => {
 
 function build() {
   const { api, spec } = cur;
+  if (spec.mode === 'xfer') return buildTransferReview();
   const { h, fmt, state } = api;
   const rows = gather(state, spec);
+  const absorbed = X.absorbedMap(state.data.txns);
   const total = L.round(rows.reduce((s, r) => s + r.v, 0), 2);
   const todo = rows.filter((r) => String(r.it.desc.categoryId) === '9999' || String(r.it.txn.status).toUpperCase() === 'REVIEW').length;
 
@@ -148,7 +151,8 @@ function build() {
       h('div', { class: 'mm' },
         h('div', { class: 'mt' }, t.merchant || t.memo || dsc.categoryName),
         h('div', { class: 'ms' }, [L.dayLabel(t.date), dsc.accountName, spec.mode === 'acct' || dsc.split ? (cat && !dsc.split ? cat.name : dsc.categoryName) : null].filter(Boolean).join(' · ')),
-        dsc.split ? splitList(it, spec, fmt, h) : null),
+        dsc.split ? splitList(it, spec, fmt, h) : null,
+        xferTag(it, absorbed.get(id))),
       h('div', { class: 'am' + (r.v < 0 ? ' neg' : '') }, spec.mode === 'acct' && !simple ? h('span', { class: 'ro' }, sign + fmt(Math.abs(r.v))) : amtEl),
       h('div', { class: 'ed' },
         catSelect(it),
@@ -177,6 +181,122 @@ function build() {
   function rerender() { if (cur) mount(); }
 }
 
+// ───────── 이체 자동 연결 (js/xfermatch.js) ─────────
+
+/** 이체로 보이는 거래 확인 창 (거래 탭 · 설정에서 엽니다) */
+export function showTransferReview(api) {
+  const sn = typeof document !== 'undefined' && document.getElementById('xf-snack');
+  if (sn) sn.remove();   // 알림이 확인 창의 버튼을 가리지 않도록 (되돌리기는 창 아래 "연결된 이체"에서)
+  show(api, { key: 'xfer-review', mode: 'xfer', title: 'Possible transfers (이체로 보이는 거래)', ids: [] });
+}
+
+// 자동/직접 연결된 이체, 또는 중복을 정리한 이체 → 표시 + 연결 풀기
+function xferTag(it, dups) {
+  const { api } = cur;
+  const { h } = api;
+  const info = X.linkInfo(it.txn, it.ps);
+  if (!info && !(dups && dups.length)) return null;
+  const keys = [];
+  if (info) keys.push(info.key);
+  (dups || []).forEach((d) => keys.push(X.pairKey(it.txn.txn_id, d.txn_id)));
+  const label = info ? (info.auto ? 'Auto-linked (자동 연결됨)' : 'Linked (연결됨)') : 'Duplicate removed (중복 정리됨)';
+  return h('div', { class: 'xf-tag' },
+    h('span', { class: 'xf-badge' }, icon('transfer', 16), label),
+    h('button', { type: 'button', class: 'xf-unlink', 'data-key': keys.join(','), onclick: () => doUnlink(keys) }, info ? 'Unlink (연결 풀기)' : 'Undo (되돌리기)'));
+}
+
+async function doUnlink(keys) {
+  const { api } = cur;
+  try {
+    const n = await X.unlink(api, keys);
+    await api.reload(); api.renderBody(true);
+    if (cur) mount();
+    api.toast(n ? 'Unlinked — back to two separate transactions (연결을 풀었어요 — 원래 두 거래로 돌아갔습니다)' : 'Nothing to unlink (풀 연결이 없습니다)');
+  } catch (e) { api.toast('되돌리지 못했습니다: ' + (e.message || e)); }
+}
+
+function buildTransferReview() {
+  const { api, spec } = cur;
+  const { h, fmt, state } = api;
+  const accMap = state.d.accMap;
+  const pairs = X.pendingSuggestions(state.d.items, accMap, state.data.settings, state.data.stmtLines);
+  const accName = (id) => { const a = accMap.get(String(id)); return a ? a.name : String(id || ''); };
+  const desc = (t) => String(t.merchant || t.merchant_raw || t.memo || '').replace(X.MARKER, '').trim() || '—';
+  const busy = (btn) => { btn.closest('.xf-card').classList.add('busy'); btn.closest('.xf-card').querySelectorAll('button').forEach((b) => { b.disabled = true; }); };
+  const after = async (msg) => { await api.reload(); api.renderBody(true); if (cur) mount(); api.toast(msg); };
+
+  const head = h('div', { class: 'dp-head' },
+    h('div', { class: 'tt' }, h('h2', null, spec.title),
+      h('div', { class: 'ss' }, pairs.length ? pairs.length + ' to check (확인할 거래 ' + pairs.length + '건)' : 'All clear (확인할 거래 없음)')),
+    h('button', { type: 'button', class: 'icon', id: 'dp-close', 'aria-label': 'Close (닫기)', onclick: close }, icon('close', 22)));
+
+  const auto = h('label', { class: 'xf-auto' },
+    h('input', { type: 'checkbox', id: 'xf-auto', checked: X.isAutoMatchOn(), onchange: (e) => { X.setAutoMatchOn(e.target.checked); if (e.target.checked) X.autoMatch(api); mount(); } }),
+    h('span', null, 'Link automatically when both sides arrive (양쪽이 들어오면 자동으로 연결)'));
+  const intro = h('div', { class: 'xf-intro' },
+    h('p', null, 'Same amount out of one account and into another within ' + X.WINDOW_DAYS + ' days. Linking makes it one transfer, so it is not spending or income. (같은 금액이 한 계좌에서 나가고 ' + X.WINDOW_DAYS + '일 안에 다른 계좌로 들어왔어요. 연결하면 이체 한 건이 되어 지출·수입에서 빠져요.)'),
+    auto);
+
+  const list = h('div', { class: 'dp-list xf-list', id: 'xf-list' }, intro);   // 설명은 목록과 함께 스크롤 (폰에서 목록 공간 확보)
+  if (!pairs.length) list.append(h('div', { class: 'dp-empty' }, 'No possible transfers right now (지금은 이체로 보이는 거래가 없어요).'));
+
+  const side = (lab, cls, it, acctId, sign, amt) => h('div', { class: 'xf-side ' + cls },
+    h('span', { class: 'xf-lab' }, lab),
+    h('div', { class: 'xf-main' },
+      h('div', { class: 'xf-acct' }, accName(acctId)),
+      h('div', { class: 'xf-desc' }, L.dayLabel(it.txn.date) + ' · ' + desc(it.txn))),
+    h('span', { class: 'xf-amt ' + (sign < 0 ? 'neg' : 'pos') }, (sign < 0 ? '−' : '+') + fmt(amt)));
+
+  pairs.forEach((p) => {
+    const dup = p.type === 'duplicate';
+    const daysTxt = p.days === 0 ? 'Same day (같은 날)' : p.days + ' day' + (p.days === 1 ? '' : 's') + ' apart (' + p.days + '일 차이)';
+    const chips = h('div', { class: 'xf-why' }, p.reasons.map((r) => h('span', { class: 'xf-chip' + (r === 'ambiguous' ? ' warn' : '') }, X.REASONS[r] || r)));
+    let sides;
+    if (dup) {
+      const dupAcct = p.acct;
+      const sgn = L.num((p.b.ps.find((x) => String(x.account_id) === String(dupAcct)) || {}).amount_cad);
+      sides = [
+        h('div', { class: 'xf-side xf-t' }, h('span', { class: 'xf-lab' }, 'Transfer (이체)'),
+          h('div', { class: 'xf-main' }, h('div', { class: 'xf-acct' }, accName(p.fromAcct) + ' → ' + accName(p.toAcct)), h('div', { class: 'xf-desc' }, L.dayLabel(p.a.txn.date) + ' · ' + desc(p.a.txn))),
+          h('span', { class: 'xf-amt' }, fmt(p.amount))),
+        side('Duplicate (중복)', 'xf-d', p.b, dupAcct, sgn < 0 ? -1 : 1, p.amount)];
+    } else {
+      sides = [side('Out (나감)', 'xf-o', p.from, p.fromAcct, -1, p.amount), side('In (들어옴)', 'xf-i', p.to, p.toAcct, 1, p.amount)];
+    }
+    list.append(h('div', { class: 'xf-card', 'data-key': p.key, 'data-type': p.type },
+      h('div', { class: 'xf-top' }, h('b', { class: 'xf-total' }, fmt(p.amount)), h('span', { class: 'xf-days' }, daysTxt)),
+      dup ? h('p', { class: 'xf-note' }, 'This looks like the other side of a transfer you already have. Remove the extra copy? (이미 있는 이체의 반대쪽과 같아 보여요. 중복을 지울까요?)') : null,
+      sides, chips,
+      h('div', { class: 'xf-btns' },
+        h('button', {
+          type: 'button', class: 'btn xf-link', onclick: async (e) => {
+            busy(e.currentTarget);
+            try { await X.linkPair(api, p); await after(dup ? 'Duplicate removed (중복을 지웠어요)' : 'Linked as a transfer (이체로 연결했어요)'); } catch (err) { api.toast('저장하지 못했습니다: ' + (err.message || err)); mount(); }
+          }
+        }, icon(dup ? 'trash' : 'transfer', 18), dup ? 'Remove duplicate (중복 지우기)' : 'Link as transfer (이체로 연결)'),
+        h('button', {
+          type: 'button', class: 'btn secondary xf-reject', onclick: async (e) => {
+            busy(e.currentTarget);
+            try { await X.rejectPair(api, p); await after('OK — kept separate (따로 두었어요)'); } catch (err) { api.toast('저장하지 못했습니다: ' + (err.message || err)); mount(); }
+          }
+        }, dup ? 'Keep both (둘 다 두기)' : 'Not a transfer (이체 아님)'))));
+  });
+
+  // 최근 연결된 이체 (되돌리기)
+  const absorbed = X.absorbedMap(state.data.txns);
+  const linked = state.d.items.filter((it) => it.desc.kind === 'TRANSFER' && (X.linkInfo(it.txn, it.ps) || absorbed.has(String(it.txn.txn_id)))).slice(0, 40);
+  if (linked.length) {
+    list.append(h('h3', { class: 'xf-sect' }, 'Linked transfers (연결된 이체) · ' + linked.length));
+    linked.forEach((it) => list.append(h('div', { class: 'xf-row', 'data-id': it.txn.txn_id },
+      h('div', { class: 'xf-main' },
+        h('div', { class: 'xf-acct' }, (it.desc.fromName || '') + ' → ' + (it.desc.toName || '')),
+        h('div', { class: 'xf-desc' }, L.dayLabel(it.txn.date) + ' · ' + desc(Object.assign({}, it.txn, { merchant: it.txn.merchant_raw || it.txn.merchant }))),
+        xferTag(it, absorbed.get(String(it.txn.txn_id)))),
+      h('span', { class: 'xf-amt' }, fmt(Math.abs(L.num(it.txn.total_cad)))))));
+  }
+  return h('div', { class: 'dp xf-review', 'data-key': spec.key }, h('div', { class: 'dp-grip' }), head, list);
+}
+
 // 나눈 거래: 줄마다 카테고리 · 소유자 · 메모 · 금액 (이 상세에 해당하는 줄은 굵게)
 function splitList(it, spec, fmt, h) {
   const ids = new Set((spec.ids || []).map(String));
@@ -184,7 +304,7 @@ function splitList(it, spec, fmt, h) {
   return h('ul', { class: 'dr-split', 'aria-label': L.SPLIT_LABEL(it.desc.split) },
     it.desc.lines.map((l) => h('li', { class: ids.has(l.accountId) ? 'hit' : '' },
       h('span', { class: 'n' }, l.name),
-      h('span', { class: 'o' }, [l.owner || it.txn.owner || '', l.memo].filter(Boolean).join(' · ')),
+      h('span', { class: 'o' }, [L.ownerLabel(l.owner || it.txn.owner || 'Joint'), l.memo].filter(Boolean).join(' · ')),
       h('span', { class: 'a' }, (l.cad < 0 ? '−' : '') + fmt(Math.abs(l.cad)) + (ccy !== 'CAD' ? ' (' + fmt(Math.abs(l.orig), ccy) + ')' : '')))));
 }
 

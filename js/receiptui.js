@@ -223,10 +223,10 @@ function openReview(api, draft, close, show, shell) {
     rows.push(field('Paid from (결제 계좌)', h('select', { id: 'rc-from', onchange: (e) => {
       draft.fromId = e.target.value;
       const a = d.accMap.get(String(draft.fromId));
-      if (a && (a.owner === 'Patrick' || a.owner === 'Ms Kim')) { draft.owner = a.owner; const o = $('rc-owner'); if (o) o.value = draft.owner; }
+      // 소유자는 기본 Joint (계좌 소유자로 바꾸지 않음)
     } }, moneyOptions(draft.fromId))));
     rows.push(field('Owner (소유자)', h('select', { id: 'rc-owner', onchange: (e) => { draft.owner = e.target.value; } },
-      CONFIG.OWNERS.map((o) => h('option', { value: o, selected: o === draft.owner }, o)))));
+      CONFIG.OWNERS.map((o) => h('option', { value: o, selected: o === draft.owner }, L.ownerLabel(o))))));
 
     rows.push(h('h2', { class: 'sect' }, 'Items (항목) · ' + draft.items.length));
     draft.items.forEach((it, i) => rows.push(itemCard(it, i)));

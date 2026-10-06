@@ -107,7 +107,7 @@ export function openCategoryForm(api, opts) {
         (t === 'ASSET' || t === 'LIABILITY') ? [
           h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Bank (금융기관)'), instIn),
           h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'Owner (소유자)'),
-            seg('cf-owner', [['Patrick', 'Patrick'], ['Ms Kim', 'Ms Kim'], ['Joint', 'Joint (공동)']], st.owner, (v) => { st.owner = v; }))
+            seg('cf-owner', ['Patrick', 'Ms Kim', 'JY Han', 'Joint'].map((o) => [o, L.ownerLabel(o)]), st.owner, (v) => { st.owner = v; }))
         ] : null
       ].flat(Infinity).filter(Boolean));
     }

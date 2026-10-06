@@ -534,7 +534,7 @@ export function buildRecords(rows, ctx) {
   const ruleOut = new Map();
   const remember = new Map();
   const counts = { created: 0, matched: 0, skipped: 0 };
-  const owner0 = acct && (acct.owner === 'Patrick' || acct.owner === 'Ms Kim') ? acct.owner : 'Joint';
+  const owner0 = 'Joint';   // 가져온 거래의 기본 소유자는 공동 (규칙에 소유자가 있으면 그것을 씀)
 
   rows.forEach((r) => {
     const ln = r.line;

@@ -161,6 +161,15 @@ export function makeAccMap(accounts) {
     return [String(a.account_id), c];
   }));
 }
+/** 가족 구성원 표시 이름 (저장 값은 영어: Patrick / Ms Kim / JY Han / Joint) */
+export const OWNER_KO = { Patrick: '한윤종', 'Ms Kim': '김명순', 'MS Kim': '김명순', 'JY Han': '한재영', Joint: '공동' };
+export function ownerLabel(o, mode) {
+  const v = String(o || 'Joint');
+  const ko = OWNER_KO[v];
+  if (!ko) return v;
+  const m = mode || lang();
+  return m === 'ko' ? ko : m === 'en' ? v : ko + ' (' + v + ')';
+}
 /** accMap 에서 꺼낸 계정의 원래 시트 행 */
 export const rawAccount = (a) => (a && a.__row) || a;
 
@@ -290,16 +299,27 @@ export function normMerchant(s) {
     .trim();
 }
 
+/** 규칙 패턴이 "^"로 시작하면 "이 글자로 시작", 아니면 "포함" */
+export const isStartsRule = (r) => /^\s*\^/.test(String((r && r.pattern) || ''));
+export const ruleKey = (pattern) => (/^\s*\^/.test(String(pattern || '')) ? '^' : '') + normMerchant(pattern);
+/** 이 규칙이 가맹점 이름(정규화된 norm)에 걸리는가 */
+export function ruleMatches(r, norm) {
+  const p = normMerchant(r.pattern);
+  if (!p || !norm) return false;
+  if (isStartsRule(r)) return norm === p || norm.indexOf(p + ' ') === 0 || (p.length >= 2 && norm.indexOf(p) === 0);
+  return norm === p || (p.length >= 3 && norm.indexOf(p) >= 0);
+}
 export function suggestRule(rules, merchant) {
   const norm = normMerchant(merchant);
   if (!norm) return null;
   const live = rules.filter((r) => !truthy(r.deleted) && r.pattern);
-  const exact = live.find((r) => normMerchant(r.pattern) === norm);
+  const exact = live.find((r) => !isStartsRule(r) && normMerchant(r.pattern) === norm);
   if (exact) return exact;
-  let best = null;
+  let best = null, bestLen = -1;
   live.forEach((r) => {
-    const p = normMerchant(r.pattern);
-    if (p.length >= 3 && norm.indexOf(p) >= 0 && (!best || p.length > normMerchant(best.pattern).length)) best = r;
+    if (!ruleMatches(r, norm)) return;
+    const len = normMerchant(r.pattern).length + (isStartsRule(r) ? 0.5 : 0);   // 길이가 같으면 "시작" 규칙이 우선
+    if (len > bestLen) { best = r; bestLen = len; }
   });
   return best;
 }
@@ -307,7 +327,7 @@ export function suggestRule(rules, merchant) {
 export function learnRule(rules, merchant, accountId, now) {
   const norm = normMerchant(merchant);
   if (!norm || !accountId) return null;
-  const existing = rules.find((r) => !truthy(r.deleted) && normMerchant(r.pattern) === norm);
+  const existing = rules.find((r) => !truthy(r.deleted) && !isStartsRule(r) && normMerchant(r.pattern) === norm);
   if (existing) {
     const same = String(existing.account_id) === String(accountId);
     return Object.assign({}, existing, {

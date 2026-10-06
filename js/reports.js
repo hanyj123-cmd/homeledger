@@ -275,7 +275,7 @@ export function render(api) {
       metric('Net income · ' + lab + ' (순수입)', (who.net < 0 ? '−' : '') + fmt(Math.abs(who.net)), false, 'bn-net'),
       metric('Income (수입)', fmt(who.income), true, 'bn-in'),
       metric('Spending (지출)', fmt(who.expense), true, 'bn-out'),
-      top ? metric('Top spender (지출 1위)', top.owner, true, 'bn-top') : null);
+      top ? metric('Top spender (지출 1위)', L.ownerLabel(top.owner), true, 'bn-top') : null);
   } else if (vend) {
     const lab = scope === 'Y' ? 'YTD' : L.monthLabel(month);
     const top = vend.rows[0];
@@ -652,7 +652,7 @@ export function render(api) {
         const delta = L.round(l.amount - prevAmt, 2);
         box.append(h('button', { type: 'button', class: 'bsrow', 'data-acct': l.id, onclick: () => D() && drill.show(D(), { key: 'acct:' + l.id + ':' + month, title: l.name, sub: L.monthLabel(month) + ' activity (이번 달 거래)', months: [month], ids: [l.id], mode: 'acct', acctType: isLiab ? 'LIABILITY' : 'ASSET', search: l.name, totalLabel: 'Net change this month (이번 달 순증감)', addDefaults: isLiab ? { fromId: l.id } : { fromId: l.id } }) },
           h('span', { class: 'ic-wrap', style: 'color:var(--green-ink)' }, icon(isLiab ? 'accounts' : 'balance', 22)),
-          h('span', { class: 't' }, l.name, l.owner ? h('div', { class: 's' }, l.owner) : null),
+          h('span', { class: 't' }, l.name, l.owner ? h('div', { class: 's' }, L.ownerLabel(l.owner)) : null),
           h('span', { class: 'v' }, fmt(l.amount)),
           h('span', { class: 'c' }, chg(delta, !isLiab))));
       });
@@ -695,7 +695,7 @@ export function render(api) {
     if (lay === 'phone') {
       const box = h('div', { class: 'who-list', id: 'who-list' });
       who.rows.forEach((r) => box.append(h('button', { type: 'button', class: 'who-card', 'data-owner': r.owner, onclick: () => go(r.owner) },
-        h('div', { class: 'wc-top' }, h('b', { class: 'wc-name' }, r.owner), h('span', { class: 'wc-net ' + (r.net < 0 ? 'out' : 'in') }, netTxt(r.net), h('span', { class: 'wc-netlab' }, ' net (순수입)'))),
+        h('div', { class: 'wc-top' }, h('b', { class: 'wc-name' }, L.ownerLabel(r.owner)), h('span', { class: 'wc-net ' + (r.net < 0 ? 'out' : 'in') }, netTxt(r.net), h('span', { class: 'wc-netlab' }, ' net (순수입)'))),
         h('div', { class: 'wc-line' }, h('span', null, 'Income (수입)'), h('b', null, fmt(r.income))),
         h('div', { class: 'wc-line' }, h('span', null, 'Spending (지출)'), h('b', null, fmt(r.expense)), chg(r.delta, false)),
         barPair(r),
@@ -709,7 +709,7 @@ export function render(api) {
       const th = (en, ko) => h('th', null, en, h('span', { class: 'ko' }, ko));
       const tb = h('tbody');
       who.rows.forEach((r) => tb.append(h('tr', { class: 'line', 'data-owner': r.owner, tabindex: '0', onclick: () => go(r.owner), onkeydown: (e) => { if (e.key === 'Enter') go(r.owner); } },
-        h('td', { class: 'nm' }, h('b', null, r.owner)),
+        h('td', { class: 'nm' }, h('b', null, L.ownerLabel(r.owner))),
         h('td', null, fmt(r.income)), h('td', null, fmt(r.expense)),
         h('td', { class: r.net < 0 ? 'out' : 'in' }, netTxt(r.net)),
         h('td', null, chg(r.delta, false)),

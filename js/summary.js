@@ -628,7 +628,7 @@ export function render(api) {
     else {
       const tb = h('table', { class: 'sm-mini' }, h('thead', null, h('tr', null, h('th', null, 'Owner (소유자)'), h('th', null, 'Income (수입)'), h('th', null, 'Spending (지출)'), h('th', null, 'Net (순)'))));
       const body = h('tbody');
-      owners.forEach((o) => body.append(h('tr', { 'data-owner': o.owner }, h('td', null, o.owner), h('td', null, money(o.income)), h('td', null, money(o.expense)), h('td', { class: o.net >= 0 ? 'in' : 'neg' }, (o.net >= 0 ? '▲ ' : '▼ ') + money(Math.abs(o.net))))));
+      owners.forEach((o) => body.append(h('tr', { 'data-owner': o.owner }, h('td', null, L.ownerLabel(o.owner)), h('td', null, money(o.income)), h('td', null, money(o.expense)), h('td', { class: o.net >= 0 ? 'in' : 'neg' }, (o.net >= 0 ? '▲ ' : '▼ ') + money(Math.abs(o.net))))));
       if (owners.length > 1) body.append(h('tr', { class: 'tot' }, h('td', null, 'Total (합계)'), h('td', null, money(sum(owners.map((o) => o.income)))), h('td', null, money(sum(owners.map((o) => o.expense)))), h('td', null, money(sum(owners.map((o) => o.net))))));
       tb.append(body);
       c.append(h('div', { class: 'sm-tscroll' }, tb));

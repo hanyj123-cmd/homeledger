@@ -77,6 +77,8 @@ const PRECACHE = [
   './js/reorder.js',
   './js/txnform.js',
   './js/printreport.js',
+  './js/bulk.js',
+  './js/xfermatch.js',
   './js/valuation.js',
   './js/wealth-forms.js',
   './js/wealth.js',

@@ -4,6 +4,12 @@ import { icon } from './icons.js';
 import { layoutOf } from './layout.js';
 import * as drill from './drill.js';
 import { incomeStatement } from './reports.js';
+import { bulkBar } from './bulk.js';
+
+// 여러 건 선택: Esc 로 끝내기 (데스크탑) — 문서에 한 번만 연결
+let escHandler = null;
+let escBound = false;
+let suppressNext = false;   // 길게 눌러 선택한 직후 따라오는 click 한 번은 무시
 
 const fmtDate = (s) => {
   const d = new Date(String(s).slice(0, 10) + 'T12:00:00');
@@ -100,6 +106,27 @@ export function render(api) {
   const acct = state.acct ? d.accMap.get(String(state.acct)) : null;
   if (state.acct && !acct) state.acct = '';
   const frag = document.createDocumentFragment();
+  const bk = state.bulk || (state.bulk = { on: false, sel: new Set(), anchor: '' });
+  // 다른 탭에 갔다 오면 선택 모드는 끝 (같은 탭 안의 다시 그리기·동기화에서는 유지)
+  if (bk.on && !bk.fresh && typeof document !== 'undefined' && !document.getElementById('bk-bar')) { bk.on = false; bk.sel.clear(); bk.anchor = ''; }
+  bk.fresh = false;
+  let shown = [];            // 지금 목록(검색·필터·달)에 보이는 거래 id
+  let bar = null;
+  const setMode = (on, firstId) => {
+    bk.on = !!on; bk.sel.clear(); bk.anchor = '';
+    if (on && firstId) { bk.sel.add(String(firstId)); bk.anchor = String(firstId); }
+    bk.fresh = !!on;
+    api.rerender();
+  };
+  if (!escBound && typeof document !== 'undefined') {
+    escBound = true;
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && escHandler) escHandler(e); });
+  }
+  escHandler = bk.on ? () => {
+    const ov = document.getElementById('overlay');
+    if ((ov && !ov.hidden) || !document.getElementById('bk-bar')) return;
+    setMode(false);
+  } : null;
 
   // ── 배너
   const month = state.month;
@@ -163,10 +190,15 @@ export function render(api) {
     const ok = download('home-ledger-' + (state.query ? 'search' : state.month) + '.csv', toCsv(api, items));
     api.toast(ok ? 'CSV downloaded (내려받았습니다)' : 'Download not supported (이 기기에서는 내려받기가 안 됩니다)');
   } }, icon('download', 22));
+  const selBtn = h('button', {
+    type: 'button', class: 'bk-selbtn' + (bk.on ? ' on' : ''), id: 'sel-btn', 'aria-pressed': String(bk.on),
+    title: bk.on ? 'Done (완료) · Esc' : 'Select several to change at once (여러 건 골라서 한 번에 바꾸기)',
+    onclick: () => setMode(!bk.on)
+  }, icon(bk.on ? 'check' : 'select', 20), h('span', null, bk.on ? 'Done (완료)' : 'Select (선택)'));
   const toolbar = h('div', { class: 'toolbar' },
     h('div', { class: 'l' }, step(-1, 'Previous month (이전 달)'), monthSel, step(1, 'Next month (다음 달)')),
     search,
-    h('div', { class: 'r' }, filterBtn, printBtn, dlBtn));
+    h('div', { class: 'r' }, selBtn, filterBtn, printBtn, dlBtn));
 
   const reviewCount = d.items.filter((it) => L.monthOf(it.txn.date) === month && (String(it.desc.categoryId) === '9999' || String(it.txn.status).toUpperCase() === 'REVIEW')).length;
   const chips = state.filterOpen ? h('div', { class: 'chips', id: 'kind-chips' }, [['', 'All (전체)'], ['EXPENSE', 'Expense (지출)'], ['INCOME', 'Income (수입)'], ['TRANSFER', 'Transfer (이체)'], ['REVIEW', 'Needs category (분류 필요' + (reviewCount ? ' ' + reviewCount : '') + ')']]
@@ -187,8 +219,80 @@ export function render(api) {
     side.replaceChildren(catList());
   } else drill.setDock(null);
   frag.append(page);
+  if (bk.on) {
+    page.classList.add('bk-mode');
+    bar = bulkBar(api, {
+      selected: bk.sel,
+      shownIds: () => shown,
+      onChange: () => paintSel(),
+      onDone: (saved) => { bk.on = false; bk.sel.clear(); bk.anchor = ''; if (!saved) api.rerender(); },
+      onSelectAll: () => {
+        const all = shown.length && shown.every((id) => bk.sel.has(id));
+        if (all) shown.forEach((id) => bk.sel.delete(id)); else shown.forEach((id) => bk.sel.add(id));
+        paintSel();
+      }
+    });
+    frag.append(bar);
+  }
   redraw();
   return frag;
+
+  // ── 여러 건 선택
+  function tapRow(e, id) {
+    if (suppressNext) { suppressNext = false; return; }
+    if (!bk.on) { api.openForm(id); return; }
+    id = String(id);
+    if (e && e.shiftKey && bk.anchor && bk.anchor !== id) {
+      const a = shown.indexOf(bk.anchor), b = shown.indexOf(id);
+      if (a >= 0 && b >= 0) {
+        const add = !bk.sel.has(id) || bk.sel.has(bk.anchor);
+        shown.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((x) => { if (add) bk.sel.add(x); else bk.sel.delete(x); });
+        if (window.getSelection) { try { window.getSelection().removeAllRanges(); } catch (err) { /* 무시 */ } }
+        paintSel();
+        return;
+      }
+    }
+    if (bk.sel.has(id)) bk.sel.delete(id); else bk.sel.add(id);
+    bk.anchor = id;
+    paintSel();
+  }
+  // 터치에서 길게 누르면 선택 시작 (또는 선택 토글)
+  function longPress(el, id) {
+    let tm = null, x = 0, y = 0;
+    const cancel = () => { if (tm) { clearTimeout(tm); tm = null; } };
+    el.addEventListener('pointerdown', (e) => {
+      suppressNext = false;
+      if (e.pointerType === 'mouse') return;
+      x = e.clientX; y = e.clientY;
+      cancel();
+      tm = setTimeout(() => {
+        tm = null;
+        suppressNext = true;
+        try { if (navigator.vibrate) navigator.vibrate(12); } catch (err) { /* 무시 */ }
+        if (!bk.on) setMode(true, id);
+        else { const k = String(id); if (bk.sel.has(k)) bk.sel.delete(k); else bk.sel.add(k); bk.anchor = k; paintSel(); }
+      }, 480);
+    });
+    el.addEventListener('pointermove', (e) => { if (tm && Math.hypot(e.clientX - x, e.clientY - y) > 10) cancel(); });
+    el.addEventListener('pointerup', cancel);
+    el.addEventListener('pointercancel', cancel);
+    el.addEventListener('contextmenu', (e) => { if (bk.on || suppressNext) e.preventDefault(); });
+  }
+  function paintSel() {
+    main.querySelectorAll('[data-id]').forEach((el) => {
+      const on = bk.sel.has(el.getAttribute('data-id'));
+      el.classList.toggle('bk-sel', on);
+      el.setAttribute(el.tagName === 'TR' ? 'aria-selected' : 'aria-pressed', String(on));
+    });
+    const hc = main.querySelector('#bk-head-ck');
+    if (hc) {
+      const n = shown.filter((id) => bk.sel.has(id)).length;
+      hc.checked = !!shown.length && n === shown.length;
+      hc.indeterminate = n > 0 && n < shown.length;
+    }
+    if (bar) bar.update();
+  }
+  function ckMark() { return h('span', { class: 'bk-ck', 'aria-hidden': 'true' }, icon('check', 16)); }
 
   // ── 이번 달 카테고리 (눌러서 그 거래들을 옆 칸/서랍에서 확인)
   function catList() {
@@ -210,10 +314,13 @@ export function render(api) {
   // ── 목록/표
   function redraw() {
     const items = filterItems(api);
+    shown = items.map((it) => String(it.txn.txn_id));
+    if (bk.on && bk.sel.size) { const keep = new Set(shown); Array.from(bk.sel).forEach((id) => { if (!keep.has(id)) bk.sel.delete(id); }); }
     const q = (state.query || '').trim();
     const a = state.acct ? d.accMap.get(String(state.acct)) : null;
     const tl = a ? balanceTimeline(d.items, a).map : null;
     if (lay === 'phone') drawList(items, q, a, tl); else drawTable(items, q, a, tl);
+    if (bk.on) paintSel();
   }
 
   function groupClass(it) {
@@ -250,7 +357,8 @@ export function render(api) {
     const foreign = t.currency && t.currency !== 'CAD';
     const prov = String(t.fx_status).toUpperCase() === 'PROVISIONAL' ? '~' : '';
     const bal = tl && tl.has(String(t.txn_id)) ? tl.get(String(t.txn_id)) : null;
-    return h('button', { type: 'button', class: 'row ' + groupClass(it), onclick: () => api.openForm(t.txn_id) },
+    const el = h('button', { type: 'button', class: 'row ' + groupClass(it) + (bk.on ? ' bk-row' : ''), 'data-id': t.txn_id, onclick: (e) => tapRow(e, t.txn_id) },
+      bk.on ? ckMark() : null,
       h('div', { class: 'row-main' },
         h('div', { class: 'row-title' }, title),
         h('div', { class: 'row-sub' }, sub.filter(Boolean).join(' · '))),
@@ -258,6 +366,8 @@ export function render(api) {
         h('div', { class: 'row-amt ' + cls }, arrow + ' ' + fmt(amt)),
         foreign ? h('div', { class: 'row-fx' }, prov + fmt(L.num(t.total_orig), t.currency)) : null,
         bal !== null ? h('div', { class: 'row-fx' }, 'Bal ' + fmt(bal)) : null));
+    longPress(el, t.txn_id);
+    return el;
   }
 
   function drawTable(items, q, a, tl) {
@@ -270,7 +380,11 @@ export function render(api) {
     const wide = lay === 'desktop';
     const head = ['Date', wide ? 'Transaction description' : 'Description'];
     const th = (txt, ko, r) => h('th', { class: r ? 'r' : '' }, txt, ko ? h('span', { class: 'ko' }, ko) : null);
-    const tr = h('tr', null, th('Date', '날짜'), th(head[1], '내역'), wide ? th('Category', '카테고리') : null, wide && !a ? th('Account', '계좌') : null, th('Withdrawals', '출금', true), th('Deposits', '입금', true), a ? th('Balance', '잔액', true) : (wide ? null : th('Account', '계좌')));
+    const headCk = bk.on ? h('th', { class: 'bk-ckcell' }, h('input', {
+      type: 'checkbox', id: 'bk-head-ck', 'aria-label': 'Select all shown (보이는 것 모두 선택)',
+      onclick: (e) => { e.stopPropagation(); const all = shown.length && shown.every((id) => bk.sel.has(id)); if (all) shown.forEach((id) => bk.sel.delete(id)); else shown.forEach((id) => bk.sel.add(id)); paintSel(); }
+    })) : null;
+    const tr = h('tr', null, headCk, th('Date', '날짜'), th(head[1], '내역'), wide ? th('Category', '카테고리') : null, wide && !a ? th('Account', '계좌') : null, th('Withdrawals', '출금', true), th('Deposits', '입금', true), a ? th('Balance', '잔액', true) : (wide ? null : th('Account', '계좌')));
     const tb = h('tbody');
     const CAP = 300;
     let lastDay = null;
@@ -288,14 +402,17 @@ export function render(api) {
         !wide ? h('div', { class: 'm' }, catEl) : null,
         t.merchant && t.memo ? h('div', { class: 'm' }, t.memo) : null,
         foreign ? h('div', { class: 'm' }, fmt(L.num(t.total_orig), t.currency)) : null);
-      tb.append(h('tr', { 'data-id': t.txn_id, onclick: () => api.openForm(t.txn_id) },
+      const trEl = h('tr', { 'data-id': t.txn_id, class: bk.on ? 'bk-row' : '', onclick: (e) => tapRow(e, t.txn_id) },
+        bk.on ? h('td', { class: 'bk-ckcell' }, ckMark()) : null,
         h('td', { class: 'd' }, q ? fmtDate(t.date) : shortDate(t.date)),
         descCell,
         wide ? h('td', null, catEl) : null,
         wide && !a ? h('td', { class: 'd' }, dsc.accountName) : null,
         h('td', { class: 'r' }, c.out ? h('span', { class: 'amt-out' }, fmt(c.out)) : c.move ? h('span', { class: 'amt-move', title: 'Transfer (이체)' }, '⇄ ' + fmt(c.move)) : ''),
         h('td', { class: 'r' }, c.inn ? h('span', { class: 'amt-in' }, fmt(c.inn)) : ''),
-        a ? h('td', { class: 'r bal' }, bal !== null ? fmt(bal) : '') : (wide ? null : h('td', { class: 'd' }, dsc.accountName))));
+        a ? h('td', { class: 'r bal' }, bal !== null ? fmt(bal) : '') : (wide ? null : h('td', { class: 'd' }, dsc.accountName)));
+      longPress(trEl, t.txn_id);
+      tb.append(trEl);
     });
     const table = h('table', { class: 'stmt', id: 'stmt' }, h('thead', null, tr), tb);
     tableHost.append(h('div', { class: 'tbl' }, h('div', { class: 'tbl-scroll' }, table)));

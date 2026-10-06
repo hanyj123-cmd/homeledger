@@ -18,6 +18,7 @@ import { rulesCard } from './rulesui.js';
 import * as MG from './migrate.js';
 import { categoriesCard } from './catform.js';
 import * as prefs from './prefs.js';
+import * as XF from './xfermatch.js';
 
 export const IDLE_KEY = 'hl_lock_idle';
 export const OWNER_KEY = 'hl_default_owner';
@@ -46,11 +47,9 @@ export function setIdleMinutes(n) {
 export function getDefaultOwnerSetting() { const v = lsGet(OWNER_KEY); return OWNERS.indexOf(v) >= 0 ? v : ''; }
 export function setDefaultOwnerSetting(o) { lsSet(OWNER_KEY, OWNERS.indexOf(o) >= 0 ? o : ''); }
 /** 새 거래의 기본 소유자: ① 이 기기에서 고른 값 → ② 로그인 이메일의 meta.users 매핑 → ③ Joint. openForm 에서 쓰세요. */
-export function defaultOwner(users, email) {
+export function defaultOwner(users, email) {   // eslint-disable-line no-unused-vars
   const own = getDefaultOwnerSetting();
-  if (own) return own;
-  const m = M.ownerFor(users, email);
-  return OWNERS.indexOf(m) >= 0 ? m : 'Joint';
+  return own || 'Joint';                         // 기본은 모두 공동(Joint)
 }
 
 // ───────── 작은 도구 ─────────
@@ -366,7 +365,7 @@ export function render(api) {
     const mine = M.ownerFor(users, email);
     const dflt = getDefaultOwnerSetting();
     const dirty = JSON.stringify(draft.filter((r) => r.email.trim()).map((r) => [r.email.trim().toLowerCase(), r.owner]).sort()) !== JSON.stringify(Object.keys(users).map((e) => [e.toLowerCase(), users[e]]).sort());
-    const ownerOpts = (sel) => OWNERS.map((o) => h('option', { value: o, selected: o === sel }, o));
+    const ownerOpts = (sel) => OWNERS.map((o) => h('option', { value: o, selected: o === sel }, L.ownerLabel(o)));
     const addEmail = h('input', { type: 'text', id: 'set-fam-new-email', inputmode: 'email', autocapitalize: 'off', autocomplete: 'off', placeholder: 'name@gmail.com', value: self.__addEmail !== undefined ? self.__addEmail : (email && !mine ? email : '') , 'aria-label': 'Email (이메일)', oninput: (e) => { self.__addEmail = e.target.value; } });
     const addOwner = h('select', { id: 'set-fam-new-owner', 'aria-label': 'Owner (소유자)', onchange: (e) => { self.__addOwner = e.target.value; } }, ownerOpts(self.__addOwner || 'Ms Kim'));
     const err = h('div', { class: 'err', id: 'set-fam-err', role: 'alert' });
@@ -388,12 +387,12 @@ export function render(api) {
     };
     return [
       head('people', 'Family & access', '가족 · 소유자'),
-      kv('This account (이 계정)', email ? email + ' → ' + (mine || 'not mapped (아직 지정 안 됨)') : 'Not signed in (로그인 안 됨)', 'set-fam-mine'),
+      kv('This account (이 계정)', email ? email + ' → ' + (mine ? L.ownerLabel(mine) : 'not mapped (아직 지정 안 됨)') : 'Not signed in (로그인 안 됨)', 'set-fam-mine'),
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Default owner for new transactions on this device (이 기기에서 새 거래의 기본 소유자)'),
         h('select', {
-          id: 'set-def-owner', onchange: (e) => { setDefaultOwnerSetting(e.target.value); toast(e.target.value ? 'New transactions start as ' + e.target.value + ' (새 거래는 ' + e.target.value + '(으)로 시작)' : 'Follows the signed-in account (로그인 계정을 따릅니다)'); redraw(); }
-        }, h('option', { value: '', selected: !dflt }, 'Auto (로그인 계정 따라)'), ownerOpts(dflt))),
-      h('div', { class: 'hint', id: 'set-def-owner-now' }, 'Right now (지금): ' + defaultOwner(users, email)),
+          id: 'set-def-owner', onchange: (e) => { setDefaultOwnerSetting(e.target.value); toast(e.target.value ? 'New transactions start as ' + e.target.value + ' (새 거래는 ' + L.ownerLabel(e.target.value, 'ko') + '(으)로 시작)' : 'New transactions start as Joint (새 거래는 공동으로 시작)'); redraw(); }
+        }, h('option', { value: '', selected: !dflt }, 'Joint — default (공동 · 기본)'), ownerOpts(dflt))),
+      h('div', { class: 'hint', id: 'set-def-owner-now' }, 'Right now (지금): ' + L.ownerLabel(defaultOwner(users, email))),
       h('h3', { class: 'set-sub' }, 'Who is who (이메일 → 소유자)'),
       draft.length ? null : h('div', { class: 'set-empty' }, 'No accounts mapped yet (아직 지정한 계정이 없어요).'),
       h('div', { class: 'set-map' }, draft.map((r, i) => h('div', { class: 'map-row', 'data-i': i },
@@ -618,8 +617,25 @@ export function render(api) {
     ];
   });
 
+  // ═════ 이체 자동 연결 (xfermatch.js) ═════
+  const secXfer = live('set-xfer', (redraw) => {
+    const on = XF.isAutoMatchOn();
+    let pend = 0;
+    try { pend = XF.pendingSuggestions(api.items, api.accMap, api.data.settings, api.data.stmtLines).length; } catch (e) { pend = 0; }
+    return [
+      head('transfer', 'Transfers between accounts', '계좌 간 이체'),
+      h('div', { class: 'set-switchrow' },
+        h('div', null, h('b', null, 'Link transfers automatically (이체 자동 연결)'),
+          h('div', { class: 'hint' }, 'When the same amount goes out of one account and into another within a few days, it becomes one Transfer — also when the other statement is uploaded later (같은 금액이 며칠 안에 한 계좌에서 나가고 다른 계좌로 들어오면 하나의 이체로 합쳐요. 다른 쪽 명세서를 나중에 올려도 새로고침 때 자동으로 연결돼요).')),
+        h('button', { type: 'button', class: 'set-switch' + (on ? ' on' : ''), id: 'set-xfer-toggle', role: 'switch', 'aria-checked': String(on), 'aria-label': 'Link transfers automatically (이체 자동 연결)',
+          onclick: () => { XF.setAutoMatchOn(!on); toast(!on ? 'Auto-link on (자동 연결 켬)' : 'Auto-link off (자동 연결 끔)'); redraw(); if (!on) { try { XF.autoMatch && api.reload && api.reload(); } catch (e) { /* ignore */ } } } }, h('i'))),
+      kv('Possible transfers to check (확인할 이체 후보)', String(pend), 'set-xfer-pend'),
+      note('Possible transfers that are not certain are listed at the top of the Ledger tab for you to confirm (확실하지 않은 후보는 거래 탭 맨 위에서 확인할 수 있어요). Linked transfers can be unlinked from their details (연결된 이체는 상세 화면에서 풀 수 있어요).')
+    ];
+  });
+
   // ═════ 배치 ═════
-  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secRules, categoriesCard(api, icon), secInstall, secData, secMigrate);
+  const grid = h('div', { class: 'settings-grid set-wrap' }, secAccount, secAppearance, secSecurity, secFamily, secCurrency, secAi, secRules, secXfer, categoriesCard(api, icon), secInstall, secData, secMigrate);
   root.append(h('div', { class: 'page set-page', }, grid,
     h('div', { class: 'set-foot' },
       h('div', { class: 'muted small', id: 'set-foot-ver' }, 'Home Ledger v' + CONFIG.APP_VERSION),

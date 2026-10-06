@@ -20,6 +20,7 @@ import * as wealth from './wealth.js';
 import * as settingsui from './settingsui.js';
 import * as theme from './theme.js';
 import * as txnform from './txnform.js';
+import * as xfer from './xfermatch.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, ccy) => L.fmtMoney(n, ccy);
@@ -188,12 +189,14 @@ export async function init() {
   $('drawer-scrim')?.addEventListener('click', () => drill.close());
   onLayout(() => { if (state.d) renderAll(); });
   sync.onStatus(renderChip);
-  sync.onData(async () => { await reload(); renderBody(); });
+  sync.onData(async () => { await reload(); renderBody(); xfer.autoMatch(xferApi()); });   // 이체 자동 연결 (동기화·가져오기 후)
   auth.onAuth(() => { sync.refreshStatus().then(renderChip); });
   await reload();
   await sync.refreshStatus();
   renderAll();
+  xfer.autoMatch(xferApi());   // 이체 자동 연결 (처음 불러온 뒤)
 }
+const xferApi = () => ({ h, toast, state, reload, renderBody });
 
 export async function doSignIn() {
   try {
@@ -306,6 +309,17 @@ function renderTxns() {
     goImport: () => { state.tab = 'import'; importui.resetIfDone(); drill.close(); renderAll(); },
     drillApi
   }));
+  xferNotice(v);
+}
+
+/** 거래 탭 위쪽: 이체로 보이는 거래가 있으면 알림 (누르면 확인 창) */
+function xferNotice(v) {
+  const n = xfer.pendingSuggestions(state.d.items, state.d.accMap, state.data.settings, state.data.stmtLines).length;
+  if (!n) return;
+  const note = h('button', { type: 'button', class: 'xf-notice', id: 'xf-notice', onclick: () => drill.showTransferReview(drillApi()) },
+    icon('transfer', 20), h('span', null, n + ' possible transfer' + (n === 1 ? '' : 's') + ' to check (이체로 보이는 거래 ' + n + '건 확인하기)'), icon('right', 18));
+  const pg = v.querySelector('.page');
+  if (pg) pg.prepend(note); else v.append(note);
 }
 
 // ───────── 보고서 (손익 · 재무상태) ─────────

@@ -412,7 +412,7 @@ function balanceSheetSec(D, F) {
       let g = '<tr class="grp"><td>' + t(kindLabel[k] || k) + '</td><td class="n">' + F.cell(st) + '</td><td class="n">' + F.cell(sp) + '</td><td class="n">' + chg(F, st - sp, goodUp, 'amt') + '</td><td class="n pct">' + (Math.abs(sp) > 0.004 ? chg(F, pctOf(st, sp), goodUp, 'pct') : '<span class="na">—</span>') + '</td></tr>';
       ls.forEach((l) => {
         if (l.valued) valued = true;
-        const own = l.owner && !/^joint$/i.test(l.owner) ? ' <span class="own">' + esc(l.owner) + '</span>' : '';
+        const own = l.owner && !/^joint$/i.test(l.owner) ? ' <span class="own">' + esc(L.ownerLabel(l.owner)) + '</span>' : '';
         g += row('ln ind', esc(accName(l)) + (l.valued ? '<sup>†</sup>' : '') + own, l.amount, prevMap.get(l.id) || 0, goodUp);
       });
       out += '</tbody><tbody class="g">' + pend + g;
@@ -539,7 +539,7 @@ function vendorsPeopleSec(D, F) {
     os.forEach((e) => {
       const p = D.ownersPrev.get(e.owner), y = D.ownersYtd.get(e.owner);
       const pe = p ? p.expense : 0;
-      body += '<tr class="ln"><td>' + esc(e.owner === 'Joint' ? tr('Joint (공동)') : e.owner) + '</td><td class="n">' + F.cell(e.income) + '</td><td class="n">' + F.cell(e.expense) + '</td><td class="n pct">' + (te > 0 ? (e.expense / te * 100).toFixed(1) + '%' : '') + '<span class="sbar"><span style="width:' + (te > 0 ? Math.max(0, e.expense / te * 100).toFixed(1) : 0) + '%"></span></span></td><td class="n">' + chg(F, e.expense - pe, false, 'amt') + '</td><td class="n">' + F.cell(y ? y.expense : 0) + '</td></tr>';
+      body += '<tr class="ln"><td>' + esc(L.ownerLabel(e.owner)) + '</td><td class="n">' + F.cell(e.income) + '</td><td class="n">' + F.cell(e.expense) + '</td><td class="n pct">' + (te > 0 ? (e.expense / te * 100).toFixed(1) + '%' : '') + '<span class="sbar"><span style="width:' + (te > 0 ? Math.max(0, e.expense / te * 100).toFixed(1) : 0) + '%"></span></span></td><td class="n">' + chg(F, e.expense - pe, false, 'amt') + '</td><td class="n">' + F.cell(y ? y.expense : 0) + '</td></tr>';
     });
     const foot = '<tr class="net"><td>' + t('Total (합계)') + '</td><td class="n">' + F.cell(ti) + '</td><td class="n">' + F.cell(te) + '</td><td class="n pct">100%</td><td class="n">' + chg(F, te - Array.from(D.ownersPrev.values()).reduce((s, e) => s + e.expense, 0), false, 'amt') + '</td><td class="n">' + F.cell(Array.from(D.ownersYtd.values()).reduce((s, e) => s + e.expense, 0)) + '</td></tr>';
     out += '<div class="keep"><h3>' + t('Spending by person (사람별 지출)') + '</h3>' + tbl('ppl', ['24%', '15%', '15%', '18%', '13%', '15%'], th([t('Person (사람)'), t('Income (수입)'), t('Spending (지출)'), t('Share (비중)'), t('vs prior (전월 대비)'), t('Year to date (연간 누계)')]), body, foot)
