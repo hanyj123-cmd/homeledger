@@ -144,7 +144,7 @@ export function renderBody(force) {
   else renderSettings();
 }
 
-const stat = (label, value, cls) => h('div', { class: 'stat' }, h('div', { class: 'stat-l' }, label), h('div', { class: 'stat-v ' + (cls || '') }, value));
+const stat = (label, value, cls) => h('div', { class: 'stat' }, h('div', { class: 'stat-l' }, label), h('div', { class: 'stat-v ' + (cls || '') + (String(value).length >= 12 ? ' long' : '') }, value));
 
 function emptyState() {
   const signedIn = !!auth.getToken();
@@ -167,7 +167,7 @@ function renderTxns() {
     type: 'search', id: 'q', placeholder: 'Search (검색): merchant, amount, account…', value: state.query,
     oninput: (e) => { state.query = e.target.value; renderList(); }
   });
-  v.append(nav, h('div', { class: 'summary', id: 'summary' }), search, h('div', { id: 'list' }));
+  v.append(h('div', { class: 'masthead' }, nav, h('div', { class: 'summary', id: 'summary' })), search, h('div', { id: 'list' }));
   renderList();
 }
 
@@ -206,7 +206,9 @@ function row(it) {
   const arrow = dsc.flow === 'out' ? '↓' : dsc.flow === 'in' ? '↑' : '⇄';
   const foreign = t.currency && t.currency !== 'CAD';
   const prov = String(t.fx_status).toUpperCase() === 'PROVISIONAL' ? '~' : '';
-  return h('button', { type: 'button', class: 'row', onclick: () => openForm(t.txn_id) },
+  const cat = state.d.accMap.get(String(dsc.categoryId));
+  const grp = dsc.kind === 'INCOME' ? 'g-in' : dsc.kind === 'EXPENSE' ? (L.GROUP_CLASS[cat && cat.report_group] || '') : 'g-move';
+  return h('button', { type: 'button', class: 'row ' + grp, onclick: () => openForm(t.txn_id) },
     h('div', { class: 'row-main' },
       h('div', { class: 'row-title' }, title),
       h('div', { class: 'row-sub' }, sub.filter(Boolean).join(' · '))),
@@ -252,10 +254,10 @@ function renderAccounts() {
   const accounts = state.data.accounts.filter(L.isActive);
   const bal = L.accountBalances(accounts, d.items.flatMap((i) => i.ps));
   const nw = L.netWorth(accounts, bal);
-  v.append(h('div', { class: 'summary' },
+  v.append(h('div', { class: 'masthead' }, h('div', { class: 'summary' },
     stat('Assets (자산)', fmt(nw.assets), ''),
     stat('Debts (부채)', fmt(nw.liabilities), ''),
-    stat('Net worth (순자산)', (nw.net >= 0 ? '▲ ' : '▼ ') + fmt(Math.abs(nw.net)), nw.net >= 0 ? 'in' : 'out')));
+    stat('Net worth (순자산)', (nw.net >= 0 ? '▲ ' : '▼ ') + fmt(Math.abs(nw.net)), nw.net >= 0 ? 'in' : 'out'))));
   if (!d.items.length) {
     v.append(h('div', { class: 'card muted' }, 'Start with opening balances (먼저 기초잔액을 입력하세요): + → Opening (기초잔액). Balances are computed from your transactions (잔액은 입력한 거래로 계산됩니다).'));
   }
@@ -263,9 +265,11 @@ function renderAccounts() {
     const list = accounts.filter((a) => a.type === g[0]);
     if (!list.length) return;
     v.append(h('h2', { class: 'sect' }, g[1]));
+    const ledger = h('div', { class: 'ledger' });
+    v.append(ledger);
     list.forEach((a) => {
       const b = bal.get(String(a.account_id)) || 0;
-      v.append(h('button', {
+      ledger.append(h('button', {
         type: 'button', class: 'row acc', onclick: () => { state.query = a.name; state.tab = 'txns'; renderAll(); }
       },
       h('div', { class: 'row-main' },

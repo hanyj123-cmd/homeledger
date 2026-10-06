@@ -80,7 +80,7 @@ export function setMode(m) { mode = m; }
 // api = { h, fmt, state, items, accounts, accMap, rerender, goSearch(text) }
 export function render(api) {
   const { h, fmt, state } = api;
-  const root = h('div', { id: 'reports-root' });
+  const root = document.createDocumentFragment();
   const seg = h('div', { class: 'seg two-seg' },
     [['IS', 'Income Statement (손익)'], ['BS', 'Balance Sheet (재무상태)']].map((m) => h('button', {
       type: 'button', id: 'rep-' + m[0], class: mode === m[0] ? 'on' : '', onclick: () => { mode = m[0]; api.rerender(); }
@@ -90,16 +90,19 @@ export function render(api) {
     h('div', { class: 'monthlabel' }, L.monthLabel(state.month)),
     h('button', { type: 'button', class: 'icon', 'aria-label': 'Next month (다음 달)', onclick: () => { state.month = L.shiftMonth(state.month, 1); api.rerender(); } }, '›'));
   function stat(label, value, cls) {
-    return h('div', { class: 'stat' }, h('div', { class: 'stat-l' }, label), h('div', { class: 'stat-v ' + (cls || '') }, value));
+    return h('div', { class: 'stat' }, h('div', { class: 'stat-l' }, label), h('div', { class: 'stat-v ' + (cls || '') + (String(value).length >= 12 ? ' long' : '') }, value));
   }
-  const lineRow = (l, arrow, cls, share) => h('button', { type: 'button', class: 'row rep-row', onclick: () => api.goSearch(l.name) },
+  const lineRow = (l, arrow, cls, share, gcls) => h('button', { type: 'button', class: 'row rep-row ' + (gcls || ''), onclick: () => api.goSearch(l.name) },
     h('div', { class: 'row-main' },
       h('div', { class: 'row-title' }, l.name),
       share !== undefined ? h('div', { class: 'row-sub' }, share + '% of spending (지출 비중)') : null),
     h('div', { class: 'row-right' }, h('div', { class: 'row-amt ' + cls }, (arrow ? arrow + ' ' : '') + fmt(l.amount))));
 
-  root.append(seg, nav);
-  if (mode === 'IS') root.append(drawIS()); else root.append(drawBS());
+  const body = mode === 'IS' ? drawIS() : drawBS();
+  const masthead = h('div', { class: 'masthead' }, seg, nav);
+  const tiles = body.querySelector('.summary');
+  if (tiles) masthead.append(tiles);
+  root.append(masthead, body);
 
   return root;
 
@@ -121,15 +124,20 @@ export function render(api) {
       return box;
     }
     if (r.incomeLines.length) {
-      box.append(h('h2', { class: 'sect' }, 'Income (수입) · ' + fmt(r.income)));
-      r.incomeLines.forEach((l) => box.append(lineRow(l, '↑', 'in')));
+      box.append(h('h2', { class: 'sect grp g-in' }, 'Income (수입) · ' + fmt(r.income)));
+      const led = h('div', { class: 'ledger' });
+      r.incomeLines.forEach((l) => led.append(lineRow(l, '↑', 'in', undefined, 'g-in')));
+      box.append(led);
     }
     r.expenseGroups.forEach((g) => {
       const pct = r.expense ? Math.round(g.total / r.expense * 100) : 0;
       const pg = prev.expenseGroups.find((x) => x.key === g.key);
-      box.append(h('h2', { class: 'sect' }, g.label + ' · ' + fmt(g.total) + ' (' + pct + '%)'));
+      const gc = L.GROUP_CLASS[g.key] || '';
+      box.append(h('h2', { class: 'sect grp ' + gc }, g.label + ' · ' + fmt(g.total) + ' (' + pct + '%)'));
       if (pg) box.append(h('div', { class: 'note' }, 'Last month (전월): ' + fmt(pg.total)));
-      g.lines.forEach((l) => box.append(lineRow(l, '↓', 'out', r.expense ? Math.round(l.amount / r.expense * 100) : 0)));
+      const led = h('div', { class: 'ledger' });
+      g.lines.forEach((l) => led.append(lineRow(l, '↓', 'out', r.expense ? Math.round(l.amount / r.expense * 100) : 0, gc)));
+      box.append(led);
     });
     return box;
   }
@@ -144,10 +152,12 @@ export function render(api) {
     box.append(h('div', { class: 'note' }, 'As of (기준일): ' + b.asOf));
     const section = (title, lines, total) => {
       box.append(h('h2', { class: 'sect' }, title + ' · ' + fmt(total)));
-      if (!lines.length) box.append(h('div', { class: 'card muted' }, '—'));
-      lines.forEach((l) => box.append(h('div', { class: 'row rep-row static' },
+      if (!lines.length) { box.append(h('div', { class: 'card muted' }, '—')); return; }
+      const led = h('div', { class: 'ledger' });
+      lines.forEach((l) => led.append(h('div', { class: 'row rep-row static' },
         h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, l.name), h('div', { class: 'row-sub' }, l.owner)),
         h('div', { class: 'row-right' }, h('div', { class: 'row-amt' }, fmt(l.amount))))));
+      box.append(led);
     };
     section('Assets (자산)', b.assets, b.totalAssets);
     section('Credit & loans (카드 · 대출)', b.liabilities, b.totalLiab);

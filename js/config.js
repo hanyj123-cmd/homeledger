@@ -10,7 +10,7 @@ export const CONFIG = {
   OPENING_ID: '3010',    // Opening Balance Equity (기초 잔액 자본)
   SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines'],
   AUTO_SYNC_MS: 60000,
-  APP_VERSION: '0.5.0'
+  APP_VERSION: '0.6.0'
 };
 
 // 각 시트의 첫 번째 열 = 행의 고유 키

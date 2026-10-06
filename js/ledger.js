@@ -14,6 +14,8 @@ export const GROUP_LABELS = {
   '금융비': 'Financial (금융비)',
   '확인 필요': 'Review (확인 필요)'
 };
+// 카테고리 그룹 → 색 표시용 CSS 클래스 (왼쪽 색 막대)
+export const GROUP_CLASS = { '수입': 'g-in', '고정비': 'g-fixed', 'semi-고정비': 'g-semi', '유흥비': 'g-fun', '금융비': 'g-fin', '확인 필요': 'g-review' };
 export const GROUP_ORDER = ['고정비', 'semi-고정비', '유흥비', '금융비', '확인 필요'];
 
 // ───────── 값 변환 ─────────
