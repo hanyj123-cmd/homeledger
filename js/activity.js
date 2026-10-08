@@ -47,7 +47,7 @@ export function columnsOf(it, acct) {
 // 계좌 한 곳의 거래 후 잔액 (날짜 → 입력 순서 → 시간순)
 export function balanceTimeline(items, acct) {
   const mine = items.filter((it) => it.ps.some((p) => !L.truthy(p.deleted) && String(p.account_id) === String(acct.account_id)));
-  mine.sort((a, b) => (a.txn.date === b.txn.date ? String(a.txn.created_at || '').localeCompare(String(b.txn.created_at || '')) : a.txn.date < b.txn.date ? -1 : 1));
+  mine.sort(L.cmpChrono);
   let bal = 0;
   const m = new Map();
   mine.forEach((it) => { bal = L.round(bal + accEffect(it, acct), 2); m.set(String(it.txn.txn_id), bal); });

@@ -75,14 +75,11 @@ function derive(data) {
     if (!byTxn.has(id)) byTxn.set(id, []);
     byTxn.get(id).push(p);
   });
-  const items = txns.map((t) => {
+  const items = txns.map((t, i) => {
     const ps = byTxn.get(String(t.txn_id)) || [];
-    return { txn: t, ps, desc: L.describeTxn(t, ps, accMap) };
+    return { txn: t, ps, desc: L.describeTxn(t, ps, accMap), _seq: i };
   });
-  items.sort((a, b) => {
-    if (a.txn.date !== b.txn.date) return a.txn.date < b.txn.date ? 1 : -1;
-    return String(b.txn.created_at || '').localeCompare(String(a.txn.created_at || ''));
-  });
+  items.sort((a, b) => L.cmpChrono(b, a));   // 최신이 위 (잔액 누적은 정확히 이 반대 순서)
   return { accMap, items, itemById: new Map(items.map((i) => [String(i.txn.txn_id), i])) };
 }
 

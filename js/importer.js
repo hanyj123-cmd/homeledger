@@ -539,7 +539,12 @@ export function buildRecords(rows, ctx) {
   const counts = { created: 0, matched: 0, skipped: 0 };
   const owner0 = 'Joint';   // 가져온 거래의 기본 소유자는 공동 (규칙에 소유자가 있으면 그것을 씀)
 
-  rows.forEach((r) => {
+  // 같은 날 거래들의 순서를 명세서 그대로 남기기: 파일이 최신→과거 순이면 뒤집어서, 시간순으로 1ms 씩 다른 입력 시각을 줍니다.
+  const ds = rows.map((r) => (r.line && r.line.date) || '').filter(Boolean);
+  const newestFirst = ds.length > 1 && ds[0] > ds[ds.length - 1];
+  const base = Date.parse(now);
+  const stamp = (i) => (Number.isFinite(base) ? new Date(base + (newestFirst ? rows.length - 1 - i : i)).toISOString() : now);
+  rows.forEach((r, ri) => {
     const ln = r.line;
     if (r.action === 'SKIP') { counts.skipped++; return; }
     const slId = L.newId('s');
@@ -574,7 +579,7 @@ export function buildRecords(rows, ctx) {
         currency: 'CAD', subtotal_orig: cad, tax_orig: '', tip_orig: '', total_orig: cad, fx_rate: 1, fx_source: '', fx_status: 'ACTUAL',
         total_cad: cad, source: 'STATEMENT', status: String(target.account_id) === UNCATEGORIZED_ID ? 'REVIEW' : 'MATCHED',
         owner: (rule && rule.owner) || owner0, trip_tag: '', is_passthrough: pass, receipt_id: '', statement_line_id: slId,
-        created_at: now, updated_at: now, deleted: false
+        created_at: stamp(ri), updated_at: now, deleted: false
       });
       sl.match_status = 'CREATED'; sl.matched_txn_id = txnId;
       counts.created++;

@@ -108,7 +108,7 @@ const unsafeStart = /^[=+\-@\t\r]/;
 export function buildCsv(items) {
   const q = (v) => '"' + String(v === undefined || v === null ? '' : v).replace(/"/g, '""') + '"';
   const text = (v) => { const s = String(v === undefined || v === null ? '' : v); return unsafeStart.test(s) ? "'" + s : s; };   // 엑셀 수식 주입 방지
-  const rows = (items || []).slice().sort((a, b) => (a.txn.date === b.txn.date ? String(a.txn.created_at || '').localeCompare(String(b.txn.created_at || '')) : (a.txn.date < b.txn.date ? -1 : 1)));
+  const rows = (items || []).slice().sort(L.cmpChrono);
   const out = [['Date', 'Merchant', 'Amount (CAD)', 'Category', 'Account', 'Owner', 'Memo'].map(q).join(',')];
   rows.forEach((it) => {
     const t = it.txn, d = it.desc || {};

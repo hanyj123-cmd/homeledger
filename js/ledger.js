@@ -65,6 +65,17 @@ export function dayLabel(dateStr) {
   return DOW[d.getDay()] + ', ' + MONTHS[parts[1] - 1] + ' ' + parts[2];
 }
 
+/** 거래 시간순 비교 (같은 날이면 입력 시각 → 시트 순서 → id). 목록(최신 위)과 잔액 누적이 같은 순서를 쓰도록 한 곳에서만 정합니다. */
+export function cmpChrono(a, b) {
+  const ta = a.txn, tb = b.txn;
+  if (ta.date !== tb.date) return String(ta.date) < String(tb.date) ? -1 : 1;
+  const c = String(ta.created_at || '').localeCompare(String(tb.created_at || ''));
+  if (c) return c;
+  const s = (a._seq === undefined ? 0 : a._seq) - (b._seq === undefined ? 0 : b._seq);
+  if (s) return s;
+  return String(ta.txn_id).localeCompare(String(tb.txn_id));
+}
+
 export function newId(prefix) {
   let u;
   if (typeof crypto !== 'undefined' && crypto.randomUUID) u = crypto.randomUUID().replace(/-/g, '');
