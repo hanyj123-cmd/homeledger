@@ -10,7 +10,7 @@ import * as activity from './activity.js';
 import * as drill from './drill.js';
 import { icon, logoSvg } from './icons.js';
 import * as catform from './catform.js';
-import { initLayout, onLayout } from './layout.js';
+import { initLayout, onLayout, layoutOf } from './layout.js';
 import * as M from './meta.js';
 import * as V from './valuation.js';
 import * as I from './insights.js';
@@ -370,6 +370,14 @@ function renderImport() {
 
 // ───────── 계좌 ─────────
 
+let accOwner = '';   // 계좌 목록 소유자 필터 (태블릿·PC)
+const ACC_GROUPS = [
+  ['cash', 'Banking', '은행'], ['invest', 'Investments', '투자'], ['fixed', 'Home & car', '집·차'], ['other', 'Other assets', '기타 자산'],
+  ['card', 'Credit cards', '신용카드'], ['loc', 'Lines of credit', '한도 대출'], ['loan', 'Loans and mortgages', '대출·모기지'],
+  ['accrued', 'Accrued', '미지급'], ['clearing', 'Clearing', '정산 중']
+];
+function goAcct(id) { state.acct = String(id); state.query = ''; state.kind = ''; state.tab = 'txns'; drill.close(); renderAll(); }
+
 function renderAccounts() {
   const d = state.d;
   const v = $('view');
@@ -379,33 +387,89 @@ function renderAccounts() {
   const bal = L.accountBalances(accounts, d.items.flatMap((i) => i.ps));
   overridesFor(L.monthOf(L.todayStr())).forEach((v, id) => { if (bal.has(id)) bal.set(id, v); });
   const nw = L.netWorth(accounts, bal);
-  v.append(banner('Accounts (계좌)', [
+  const phone = layoutOf() === 'phone';
+  const bn = banner('Accounts (계좌)', [
     { label: 'Net worth (순자산)', value: (nw.net < 0 ? '−' : '') + fmt(Math.abs(nw.net)), id: 'ac-net' },
     { label: 'Assets (자산)', value: fmt(nw.assets), sub: true },
-    { label: 'Debts (부채)', value: fmt(nw.liabilities), sub: true }]));
+    { label: 'Debts (부채)', value: fmt(nw.liabilities), sub: true }]);
+  v.append(bn);
   const pg = h('div', { class: 'page' });
+  if (!phone) {
+    bn.classList.remove('nopills');
+    v.append(h('div', { class: 'pills', id: 'acl-pills' },
+      h('button', { type: 'button', class: 'pillbtn', id: 'acl-new', onclick: () => openForm(null, {}) }, icon('plus', 24), 'New ', h('span', { class: 'ko' }, '거래 추가')),
+      h('button', { type: 'button', class: 'pillbtn', id: 'acl-xfer', onclick: () => openForm(null, { kind: 'TRANSFER' }) }, icon('transfer', 24), 'Make a transfer ', h('span', { class: 'ko' }, '이체')),
+      h('button', { type: 'button', class: 'pillbtn', id: 'acl-imp', onclick: () => { state.tab = 'import'; importui.resetIfDone(); drill.close(); renderAll(); } }, icon('import', 24), 'Import ', h('span', { class: 'ko' }, '가져오기'))));
+  }
   v.append(pg);
   if (!d.items.length) {
     pg.append(h('div', { class: 'card muted' }, 'Start with opening balances (먼저 기초잔액을 입력하세요): New → Opening (기초잔액). Balances are computed from your transactions (잔액은 입력한 거래로 계산됩니다).'));
   }
-  [['ASSET', 'Assets (자산)'], ['LIABILITY', 'Credit & loans (카드 · 대출)']].forEach((g) => {
-    const list = accounts.filter((a) => a.type === g[0]);
-    if (!list.length) return;
-    pg.append(h('h2', { class: 'sect' }, g[1]));
-    const grid = h('div', { class: 'acc-grid' });
-    pg.append(grid);
-    list.forEach((a) => {
-      const b = bal.get(String(a.account_id)) || 0;
-      grid.append(h('button', {
-        type: 'button', class: 'acc-card' + (a.type === 'LIABILITY' ? ' liab' : ''), 'data-acct': a.account_id,
-        onclick: () => { state.acct = String(a.account_id); state.query = ''; state.kind = ''; state.tab = 'txns'; drill.close(); renderAll(); }
-      },
-      h('div', { class: 'ty' }, a.type === 'LIABILITY' ? 'Credit / loan' : 'Account'),
-      h('div', { class: 'nm' }, L.accLabel(a)),
-      h('div', { class: 'ow' }, [a.owner, a.institution].filter(Boolean).join(' · ') || '\u00a0'),
-      h('div', { class: 'bl' }, fmt(b))));
+  if (phone) {
+    [['ASSET', 'Assets (자산)'], ['LIABILITY', 'Credit & loans (카드 · 대출)']].forEach((g) => {
+      const list = accounts.filter((a) => a.type === g[0]);
+      if (!list.length) return;
+      pg.append(h('h2', { class: 'sect' }, g[1]));
+      const grid = h('div', { class: 'acc-grid' });
+      pg.append(grid);
+      list.forEach((a) => {
+        const b = bal.get(String(a.account_id)) || 0;
+        grid.append(h('button', { type: 'button', class: 'acc-card' + (a.type === 'LIABILITY' ? ' liab' : ''), 'data-acct': a.account_id, onclick: () => goAcct(a.account_id) },
+          h('div', { class: 'ty' }, a.type === 'LIABILITY' ? 'Credit / loan' : 'Account'),
+          h('div', { class: 'nm' }, L.accLabel(a)),
+          h('div', { class: 'ow' }, [a.owner, a.institution].filter(Boolean).join(' · ') || ' '),
+          h('div', { class: 'bl' }, fmt(b))));
+      });
     });
+    return;
+  }
+
+  // ── 태블릿·PC: 은행 사이트처럼 그룹별 목록
+  const owners = [];
+  accounts.forEach((a) => { const o = String(a.owner || '').trim(); if (o && owners.indexOf(o) < 0) owners.push(o); });
+  if (accOwner && owners.indexOf(accOwner) < 0) accOwner = '';
+  const shown = accounts.filter((a) => (a.type === 'ASSET' || a.type === 'LIABILITY') && (!accOwner || String(a.owner || '').trim() === accOwner));
+  // 외화 계좌: 원래 통화 잔액
+  const orig = new Map();
+  d.items.forEach((it) => it.ps.forEach((p) => {
+    if (L.truthy(p.deleted)) return;
+    const k = String(p.account_id);
+    orig.set(k, (orig.get(k) || 0) + L.num(p.amount_orig !== '' && p.amount_orig !== undefined ? p.amount_orig : p.amount_cad));
+  }));
+  const fx = (a) => {
+    const cur = String(a.currency || 'CAD').toUpperCase();
+    if (cur === 'CAD') return null;
+    const r = orig.get(String(a.account_id)) || 0;
+    return cur + ' ' + fmt(L.round(a.type === 'LIABILITY' ? -r : r, 2));
+  };
+  const head = h('div', { class: 'acl-head' },
+    h('h1', { class: 'acl-title' }, 'My accounts ', h('span', { class: 'ko' }, '내 계좌')),
+    owners.length > 1 ? h('div', { class: 'acl-seg', role: 'group', 'aria-label': 'Owner (소유자)' },
+      [['', 'All (전체)']].concat(owners.map((o) => [o, o])).map(([k, lab]) => h('button', { type: 'button', class: accOwner === k ? 'on' : '', 'aria-pressed': String(accOwner === k), 'data-owner': k,
+        onclick: () => { accOwner = k; renderAccounts(); } }, lab))) : null);
+  const panel = h('div', { class: 'acl', id: 'acl' });
+  ACC_GROUPS.forEach(([k, en, ko]) => {
+    const list = shown.filter((a) => I.kindOf(a) === k);
+    if (!list.length) return;
+    if (k === 'clearing' && list.every((a) => Math.abs(bal.get(String(a.account_id)) || 0) < 0.005)) return;
+    const tot = L.round(list.reduce((s2, a) => s2 + (bal.get(String(a.account_id)) || 0), 0), 2);
+    const fxTot = new Map();
+    list.forEach((a) => { const c = String(a.currency || 'CAD').toUpperCase(); if (c !== 'CAD') { const r = orig.get(String(a.account_id)) || 0; fxTot.set(c, (fxTot.get(c) || 0) + (a.type === 'LIABILITY' ? -r : r)); } });
+    panel.append(h('div', { class: 'acl-g', 'data-group': k },
+      h('div', { class: 'acl-gh' }, h('span', { class: 'acl-gn' }, en, ' ', h('span', { class: 'ko' }, ko)),
+        h('span', { class: 'acl-gt' }, h('b', null, (tot < 0 ? '−' : '') + fmt(Math.abs(tot))), Array.from(fxTot.entries()).map(([c, n]) => h('b', { class: 'acl-fx' }, c + ' ' + fmt(L.round(n, 2)))))),
+      list.map((a) => {
+        const b = bal.get(String(a.account_id)) || 0;
+        const f = fx(a);
+        const sub = [a.last4 ? '····' + String(a.last4).replace(/\s*,\s*/g, ' ····') : '', a.institution, a.owner].filter(Boolean).join(' · ');
+        return h('button', { type: 'button', class: 'acl-row', 'data-acct': a.account_id, onclick: () => goAcct(a.account_id), 'aria-label': L.accLabel(a) + ' ' + fmt(b) },
+          h('span', { class: 'acl-nm' }, h('span', { class: 'acl-link' }, a.name), a.name_ko && a.name_ko !== a.name ? h('span', { class: 'ko' }, ' ' + a.name_ko) : null, sub ? h('span', { class: 'acl-no' }, sub) : null),
+          h('span', { class: 'acl-bal' }, f ? h('span', { class: 'acl-fx' }, f) : null, h('span', { class: f ? 'acl-cad' : '' }, (b < 0 ? '−' : '') + fmt(Math.abs(b)) + (f ? ' CAD' : ''))),
+          h('span', { class: 'acl-go' }, icon('right', 20)));
+      })));
   });
+  if (!panel.childNodes.length) panel.append(h('div', { class: 'muted acl-empty' }, 'No accounts for this owner (이 소유자의 계좌가 없어요).'));
+  pg.append(head, panel);
 }
 
 // ───────── 설정 ─────────

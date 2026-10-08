@@ -6,6 +6,7 @@ import * as drill from './drill.js';
 import { incomeStatement } from './reports.js';
 import { bulkBar } from './bulk.js';
 import * as RV from './receiptview.js';
+import * as M from './meta.js';
 
 // 여러 건 선택: Esc 로 끝내기 (데스크탑) — 문서에 한 번만 연결
 let escHandler = null;
@@ -130,6 +131,16 @@ export function render(api) {
   } : null;
 
   // ── 배너
+  // 한도 (부채 설정의 Limit): 카드·한도 대출 → 사용 가능 금액 / 한도 (은행 사이트처럼)
+  function limitMetrics(a, bal, liab) {
+    let lim = 0;
+    try { const dm = M.readJson(state.data.settings, M.KEYS_META.debts, {}) || {}; lim = L.num((dm[String(a.account_id)] || {}).limit); } catch (e) { lim = 0; }
+    if (!(lim > 0)) return [];
+    const avail = L.round(liab ? lim - bal : bal + lim, 2);
+    return [
+      h('div', { class: 'metric sub', id: 'bn-avail' }, h('div', { class: 'metric-lab' }, 'Available (사용 가능)'), h('div', { class: 'metric-val' }, (avail < 0 ? '−' : '') + fmt(Math.abs(avail)))),
+      h('div', { class: 'metric sub', id: 'bn-limit' }, h('div', { class: 'metric-lab' }, liab ? 'Credit limit (한도)' : 'Overdraft limit (마이너스 한도)'), h('div', { class: 'metric-val' }, fmt(lim)))];
+  }
   const month = state.month;
   const monthItems = d.items.filter((it) => L.monthOf(it.txn.date) === month && (!acct || it.ps.some((p) => !L.truthy(p.deleted) && String(p.account_id) === String(acct.account_id))));
   const metrics = h('div', { class: 'metrics' });
@@ -140,6 +151,7 @@ export function render(api) {
     const liab = acct.type === 'LIABILITY';
     metrics.append(
       h('div', { class: 'metric', id: 'bn-main' }, h('div', { class: 'metric-lab' }, liab ? 'Balance owed (사용 잔액)' : 'Current balance (현재 잔액)'), h('div', { class: 'metric-val' }, fmt(bal))),
+      ...limitMetrics(acct, bal, liab),
       h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, liab ? 'Payments · month (납부)' : 'Money in · month (입금)'), h('div', { class: 'metric-val' }, fmt(L.round(inn, 2)))),
       h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, liab ? 'Charges · month (사용)' : 'Money out · month (출금)'), h('div', { class: 'metric-val' }, fmt(L.round(out, 2)))));
   } else {
