@@ -99,6 +99,8 @@ export async function registerSW(opts = {}) {
     const id = setInterval(update, checkEveryMinutes * 60000);
     cleanups.push(() => clearInterval(id));
   }
+  // 앱을 막 열었을 때도 바로 새 버전을 확인합니다 (예전에는 60분 주기나 탭 복귀 때만 확인해서 늦었어요)
+  update();
   if (typeof document !== 'undefined') {
     const vis = () => { if (document.visibilityState === 'visible') update(); };
     document.addEventListener('visibilitychange', vis);
