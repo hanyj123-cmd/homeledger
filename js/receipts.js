@@ -262,6 +262,33 @@ export function guessPayAccount(parsed, accounts) {
   return null;
 }
 
+/**
+ * 안내용 할인 줄 찾기. 영수증에 "TYR Member Savings: $5.00" · "You saved" 처럼 이미 항목 가격에 반영된 절약 금액을
+ * 알려주는 줄이 있으면, 그것까지 빼면 합계가 영수증 소계보다 작아집니다.
+ * 항목 합계 − (차감할 할인) = 소계 가 되도록, 차감하지 않아도 되는 할인 줄의 위치(index) 목록을 돌려줍니다.
+ * 이미 맞거나, 어떻게 해도 안 맞으면 [] (건드리지 않음). 되도록 많은 할인을 그대로 둡니다.
+ */
+export function informationalDiscounts(items, target, dec) {
+  if (!Number.isFinite(target) || target <= 0) return [];
+  const r = (n) => L.round(n, dec === undefined ? 2 : dec);
+  const base = r(items.filter((it) => !it.is_discount).reduce((s, it) => s + (Number(it.amount) || 0), 0));
+  const discs = [];
+  items.forEach((it, i) => { if (it.is_discount) discs.push({ i, a: Number(it.amount) || 0 }); });
+  if (!discs.length || discs.length > 12) return [];
+  const tol = 0.005;
+  const total = (mask) => r(base - discs.reduce((s, d, k) => s + (mask & (1 << k) ? d.a : 0), 0));
+  const all = (1 << discs.length) - 1;
+  if (Math.abs(total(all) - target) < tol) return [];   // 할인을 모두 차감해서 이미 맞음
+  let best = -1, bestKept = -1;
+  for (let mask = 0; mask < all; mask++) {               // mask = 차감하는 할인 줄들
+    if (Math.abs(total(mask) - target) >= tol) continue;
+    const kept = discs.reduce((c, d, k) => c + (mask & (1 << k) ? 1 : 0), 0);
+    if (kept > bestKept) { best = mask; bestKept = kept; }
+  }
+  if (best < 0) return [];
+  return discs.filter((d, k) => !(best & (1 << k))).map((d) => d.i);
+}
+
 // 서버가 돌려준 결과 → 편집용 초안
 // ctx = { accMap, rules, taxCodes, fromId, owner }
 export function draftFromParsed(parsed, img, meta, ctx) {
@@ -278,13 +305,18 @@ export function draftFromParsed(parsed, img, meta, ctx) {
     if (isTipName(it.name)) { movedTip += Number(it.amount) || 0; movedAny = true; return false; }
     return true;
   });
-  const items = rawItems.map((it) => newItem({
+  const taxVal = parsed.tax_total === null || parsed.tax_total === undefined ? (movedTax > 0 ? movedTax : null) : parsed.tax_total;
+  const tipVal = parsed.tip ? parsed.tip : (movedTip > 0 ? movedTip : 0);
+  // "Member Savings $5.00" 처럼 이미 가격에 반영된 안내용 할인 줄은 빼고, 항목 합계가 영수증 소계와 맞게 합니다
+  const subTarget = parsed.subtotal > 0 ? Number(parsed.subtotal) : (parsed.total > 0 ? Number(parsed.total) - (Number(taxVal) || 0) - (Number(tipVal) || 0) : NaN);
+  const dropIdx = informationalDiscounts(rawItems, subTarget, dec);
+  const keptItems = dropIdx.length ? rawItems.filter((it, i) => dropIdx.indexOf(i) < 0) : rawItems;
+  const items = keptItems.map((it) => newItem({
     name: bilingualName(it), name_raw: it.name_raw || '', amountText: String(L.round(it.amount, dec)), is_discount: !!it.is_discount,
     tax_code: ccy === 'CAD' ? (it.tax_code || '') : '', category_id: it.category_id || ruleCat || '', qty: it.qty, unit_price: it.unit_price
   }));
-  const taxVal = parsed.tax_total === null || parsed.tax_total === undefined ? (movedTax > 0 ? movedTax : null) : parsed.tax_total;
-  const tipVal = parsed.tip ? parsed.tip : (movedTip > 0 ? movedTip : 0);
   const moveWarn = movedAny ? ['Tax / tip lines that were read as items were moved to the Tax and Tip boxes (품목으로 읽힌 세금·팁 줄을 세금·팁 칸으로 옮겼어요).'] : [];
+  if (dropIdx.length) moveWarn.push('Savings lines already included in the item prices were removed (이미 가격에 반영된 할인 안내 줄 ' + dropIdx.length + '개를 뺐어요).');
   return {
     merchant: parsed.merchant || '', date: parsed.date || L.todayStr(), currency: ccy,
     totalText: parsed.total ? String(L.round(parsed.total, dec)) : '', taxText: taxVal === null ? '' : String(L.round(taxVal, dec)),
