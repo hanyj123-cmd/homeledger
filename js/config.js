@@ -1,6 +1,6 @@
 // Home Ledger 설정. 아래 값들은 비밀값이 아닙니다. (공개 저장소에 올려도 안전)
 export const CONFIG = {
-  CLIENT_ID: '430239078821-6b54fcn5r4rikfoq8eg9k7e9q3pga8rq.apps.googleusercontent.com',
+  CLIENT_ID: '73033444727-eihfhc1s2pnls6uqo677202nl88fpm4i.apps.googleusercontent.com',
   SHEET_ID: '1CsPFT6-ERWMSzEVZu0wgqY_wWOy7Km8YGQj-Eo4eoTc',
   SCOPES: 'https://www.googleapis.com/auth/spreadsheets openid email',
   BASE_CCY: 'CAD',
@@ -11,7 +11,7 @@ export const CONFIG = {
   SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines', 'Receipts', 'LineItems', 'Budgets'],
   AUTO_SYNC_MS: 60000,
   RECEIPT_API_URL: 'https://script.google.com/macros/s/AKfycbzMiItzeZw23yPNth8Fk7khP3DP012RoMIxHBrVFvyxc2kwrjHttlSEePdLWf9diNrv/exec',
-  APP_VERSION: '0.21.4'
+  APP_VERSION: '0.21.5'
 };
 
 // 각 시트의 첫 번째 열 = 행의 고유 키
