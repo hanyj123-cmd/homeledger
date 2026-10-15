@@ -70,7 +70,10 @@ async function onToken(resp) {
     token = null; expiresAt = 0;
     try { google.accounts.oauth2.revoke(resp.access_token, () => {}); } catch (e) { /* ignore */ }
     emit();
-    if (pending) { pending.reject(new Error(SCOPE_MESSAGE)); pending = null; }
+    const got = String(resp.scope || '(none)').split(' ').map((x) => x.replace('https://www.googleapis.com/auth/', '')).join(', ');
+    const detail = ' [v' + CONFIG.APP_VERSION + ' · client ' + String(CONFIG.CLIENT_ID).split('-')[0] + ' · granted: ' + got + ']';
+    try { console.warn('[auth] sheets scope missing', resp.scope); } catch (e) { /* ignore */ }
+    if (pending) { pending.reject(new Error(SCOPE_MESSAGE + detail)); pending = null; }
     return;
   }
   needConsent = false;
