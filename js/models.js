@@ -1,23 +1,43 @@
-// Gemini 모델 선택. 영수증 읽기는 속도가 중요해서 가벼운 모델이, AI 조언은 품질이 중요해서 더 좋은 모델이 어울립니다.
+// AI 모델 선택 (Gemini · Claude). 영수증 읽기는 속도가 중요해서 가벼운 모델이, AI 조언은 품질이 중요해서 더 좋은 모델이 어울립니다.
 // 선택값은 Settings 시트(meta.gemini)에 저장되어 폰·아이패드·컴퓨터가 같이 쓰고, 이 기기에도 복사해 두어 오프라인에서도 동작합니다.
+// (시트 키 이름은 예전 그대로 'meta.gemini' 입니다. 기존 장부와 호환하려고 바꾸지 않았어요.)
 // 비어 있으면 "자동" = 서버(Apps Script)의 기본 순서를 따릅니다.
+// 어느 회사 모델인지는 이름 앞부분(gemini- / claude-)으로 서버가 알아봅니다. 앱은 모델 이름만 보냅니다.
 
 const LS_KEY = 'hl_models';
 export const KINDS = ['receipt', 'ai'];   // receipt = 영수증 읽기, ai = AI 조언 · 거래 분류
-export const NAME_RE = /^gemini-[a-z0-9][a-z0-9.\-]{1,58}$/;
+export const PROVIDERS = ['gemini', 'claude'];
+export const NAME_RE = /^(gemini|claude)-[a-z0-9][a-z0-9.\-]{1,58}$/;
+
+export const PROVIDER_LABEL = {
+  gemini: { en: 'Gemini (Google)', ko: '제미나이 (구글)' },
+  claude: { en: 'Claude (Anthropic)', ko: '클로드 (앤트로픽)' }
+};
 
 // 속도는 계정·시간대에 따라 다릅니다. 실제 속도는 설정의 "속도 측정"으로 확인하세요.
+// Claude 는 서버(Apps Script)의 Script Properties 에 ANTHROPIC_API_KEY 가 있어야 동작합니다.
 export const PRESETS = [
   { id: '', en: 'Auto (server default)', ko: '자동 (서버 기본)' },
   { id: 'gemini-3.5-flash-lite', en: 'Lightest — usually fastest', ko: '가장 가벼움 · 보통 가장 빠름' },
   { id: 'gemini-3.5-flash', en: 'Balanced', ko: '균형' },
   { id: 'gemini-3-flash-preview', en: 'Preview', ko: '미리보기 버전' },
   { id: 'gemini-2.5-flash-lite', en: 'Previous generation, light', ko: '이전 세대 · 가벼움' },
-  { id: 'gemini-2.5-flash', en: 'Previous generation', ko: '이전 세대' }
+  { id: 'gemini-2.5-flash', en: 'Previous generation', ko: '이전 세대' },
+  { id: 'claude-haiku-5-5', en: 'Lightest — fast and cheap', ko: '가장 가벼움 · 빠르고 저렴' },
+  { id: 'claude-sonnet-5-5', en: 'Balanced — better accuracy', ko: '균형 · 더 정확함' },
+  { id: 'claude-opus-5-5', en: 'Most capable — slower, costs more', ko: '가장 똑똑함 · 느리고 비쌈' }
 ];
 
 const blank = () => ({ receipt: '', ai: '' });
 let cur = blank();
+
+/** 'gemini-…' | 'claude-…' → 'gemini' | 'claude' ('' 이면 자동 → '') */
+export function providerOf(name) {
+  const m = String(name === undefined || name === null ? '' : name).trim().toLowerCase();
+  if (m.indexOf('claude-') === 0) return 'claude';
+  if (m.indexOf('gemini-') === 0) return 'gemini';
+  return '';
+}
 
 export function clean(name) {
   const m = String(name === undefined || name === null ? '' : name).trim().toLowerCase();

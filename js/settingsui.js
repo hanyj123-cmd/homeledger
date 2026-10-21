@@ -524,7 +524,7 @@ export function render(api) {
     ];
   });
 
-  // ═════ 6-3. Gemini 모델 선택 ═════
+  // ═════ 6-3. AI 모델 선택 (Gemini · Claude) ═════
   const secModel = live('set-model', (redraw, self) => {
     const cur = Object.assign({ receipt: '', ai: '' }, meta.gemini || {});
     const avail = ai.aiAvailable();
@@ -541,10 +541,21 @@ export function render(api) {
         toast(val ? 'Model: ' + val + ' (모델을 바꿨어요)' : 'Model: auto (자동으로 돌아갔어요)');
       } catch (e) { toast('저장하지 못했습니다: ' + msg(e)); }
     };
+    // 모델을 회사별(Gemini / Claude)로 묶어서 보여줍니다. 어느 쪽도 아닌 이름이 섞여 있으면 마지막에 따로 둡니다.
+    const optionOf = (kind, m) => h('option', { value: m, selected: cur[kind] === m }, optLabel(m));
+    const groupsOf = (kind) => {
+      const out = models.PROVIDERS.map((p) => {
+        const ids = known.filter((m) => models.providerOf(m) === p);
+        return ids.length ? h('optgroup', { label: models.PROVIDER_LABEL[p].en + ' (' + models.PROVIDER_LABEL[p].ko + ')' }, ids.map((m) => optionOf(kind, m))) : null;
+      });
+      const rest = known.filter((m) => !models.providerOf(m));
+      if (rest.length) out.push(h('optgroup', { label: 'Other (기타)' }, rest.map((m) => optionOf(kind, m))));
+      return out;
+    };
     const picker = (kind, labelEn, labelKo) => h('label', { class: 'field' }, h('span', { class: 'lbl' }, labelEn + ' (' + labelKo + ')'),
       h('select', { id: 'set-model-' + kind, 'aria-label': labelEn + ' (' + labelKo + ')', onchange: (e) => save(kind, e.target.value) },
         h('option', { value: '', selected: !cur[kind] }, optLabel('')),
-        known.map((m) => h('option', { value: m, selected: cur[kind] === m }, optLabel(m)))));
+        groupsOf(kind)));
     const runTest = async (name) => {
       const t0 = Date.now();
       try {
@@ -574,13 +585,13 @@ export function render(api) {
       modelUi.busy = ''; redraw();
     };
     const rows = Object.keys(modelUi.speed).filter((k) => k && modelUi.speed[k]).sort((a, b) => (modelUi.speed[a].err ? 1 : 0) - (modelUi.speed[b].err ? 1 : 0) || modelUi.speed[a].ms - modelUi.speed[b].ms);
-    const customIn = h('input', { type: 'text', id: 'set-model-custom', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: 'gemini-…', 'aria-label': 'Model name (모델 이름)' });
-    const useCustom = (kind) => { const v = models.clean(customIn.value); if (!v) { toast('Check the name (모델 이름을 확인하세요: gemini-로 시작)'); return; } save(kind, v); };
+    const customIn = h('input', { type: 'text', id: 'set-model-custom', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: 'gemini-… / claude-…', 'aria-label': 'Model name (모델 이름)' });
+    const useCustom = (kind) => { const v = models.clean(customIn.value); if (!v) { toast('Check the name (모델 이름을 확인하세요: gemini- 또는 claude- 로 시작)'); return; } save(kind, v); };
     const busy = !!modelUi.busy;
     return [
       head('spark', 'AI model (speed)', 'AI 모델 · 속도'),
       !avail ? h('div', { class: 'set-warn', id: 'set-model-off' }, A.getState().signedIn ? 'The server is not ready (서버 설정이 필요합니다).' : 'Sign in first (먼저 로그인하세요).') : null,
-      note('Receipt reading feels slow? Pick a lighter model. "Test speed" tells you the real time on your account (영수증 읽기가 느리면 더 가벼운 모델을 고르세요. "속도 측정"으로 내 계정에서 실제로 몇 초 걸리는지 볼 수 있어요). Shared by everyone using this ledger (이 장부를 쓰는 가족 모두에게 같이 적용돼요).'),
+      note('Receipt reading feels slow? Pick a lighter model. "Test speed" tells you the real time on your account (영수증 읽기가 느리면 더 가벼운 모델을 고르세요. "속도 측정"으로 내 계정에서 실제로 몇 초 걸리는지 볼 수 있어요). Shared by everyone using this ledger (이 장부를 쓰는 가족 모두에게 같이 적용돼요). You can choose Gemini or Claude models; Claude needs an Anthropic API key on the server (제미나이와 클로드 중에서 고를 수 있어요. 클로드는 서버에 앤트로픽 API 키가 있어야 해요).'),
       picker('receipt', 'Receipt reading', '영수증 읽기'),
       picker('ai', 'AI advice & auto-categorize', 'AI 조언 · 자동 분류'),
       h('div', { class: 'btnrow' },
@@ -600,7 +611,7 @@ export function render(api) {
       h('div', { class: 'map-row add' }, customIn,
         h('button', { type: 'button', class: 'btn secondary', id: 'set-model-use-r', onclick: () => useCustom('receipt') }, 'Receipts (영수증)'),
         h('button', { type: 'button', class: 'btn secondary', id: 'set-model-use-a', onclick: () => useCustom('ai') }, 'AI')),
-      note('If the chosen model does not work, the server tries the next one automatically, so nothing breaks (고른 모델이 안 되면 서버가 알아서 다음 모델로 넘어가요). Speed depends on the time of day and your free quota (속도는 시간대와 무료 사용량에 따라 달라져요).')
+      note('If the chosen model does not work, the server tries the next one automatically, so nothing breaks (고른 모델이 안 되면 서버가 알아서 다음 모델로 넘어가요). Speed depends on the time of day and your quota (속도는 시간대와 사용량에 따라 달라져요). Claude models are billed to your Anthropic account (클로드 모델은 앤트로픽 계정으로 요금이 청구돼요).')
     ];
   });
 
