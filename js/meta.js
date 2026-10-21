@@ -8,7 +8,8 @@ export const KEYS_META = {
   debts: 'meta.debts',        // { 계정id: {apr, limit, min} }
   assets: 'meta.assets',      // { 계정id: {method, cost, date, rate, salvage, life, override} }
   holdings: 'meta.holdings',  // [{sym, shares, book, acct}]
-  prices: 'meta.prices',      // { TD.TO: {price, at, ccy} }
+  prices: 'meta.prices',      // { TD.TO: {price, at, ccy, prev?:{price, at}} } prev = 이전 날짜의 시세 (어제 대비 표시용)
+  buys: 'meta.buys',          // [{id, date, sym, acct, shares, cost, note}] 주식 매수 기록 (2주마다 사는 것 등)
   accrual: 'meta.accrual',    // {annual, since, opening, code, acct}
   users: 'meta.users',        // { 'email@x.com': 'Ms Kim' }
   plan: 'meta.plan',          // {extra, strategy, growth, horizon}
@@ -17,6 +18,7 @@ export const KEYS_META = {
   fcplan: 'meta.fcplan'       // { cells: { 'YYYY-MM': { 계정id: 금액 } } } 올해 남은 달 상향식 예측
 };
 export const NOTE_PREFIX = 'note.';
+export const SNAP_PREFIX = 'snap.';   // 'snap.2026-09' = 그 달 말 주식 기록 { at, rows:[{sym, acct, shares, book, price, ccy, orig?, fx?}] } (한 달에 한 줄)
 const clone = (v) => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
 
 export function rawRow(settings, key) {
@@ -46,6 +48,8 @@ export function readAll(settings) {
     assets: readJson(settings, KEYS_META.assets, {}),
     holdings: readJson(settings, KEYS_META.holdings, []),
     prices: readJson(settings, KEYS_META.prices, {}),
+    buys: readBuys(settings),
+    snaps: readSnaps(settings),
     accrual: readJson(settings, KEYS_META.accrual, null),
     users: readJson(settings, KEYS_META.users, {}),
     plan: Object.assign({ extra: 0, strategy: 'avalanche', growth: 3, horizon: 12 }, readJson(settings, KEYS_META.plan, {})),
@@ -53,6 +57,30 @@ export function readAll(settings) {
     gemini: Object.assign({ receipt: '', ai: '' }, readJson(settings, KEYS_META.gemini, {}))
   };
 }
+/** 주식 매수 기록 (날짜 오름차순). 깨진 줄은 건너뜁니다. */
+export function readBuys(settings) {
+  const v = readJson(settings, KEYS_META.buys, []);
+  return (Array.isArray(v) ? v : []).filter((b) => b && typeof b === 'object' && /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || '')) && b.sym)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+/** 월말 주식 기록: { 'YYYY-MM': { at, rows:[...] } } */
+export function readSnaps(settings) {
+  const out = {};
+  (settings || []).forEach((r) => {
+    const k = String(r.key || '');
+    if (k.indexOf(SNAP_PREFIX) !== 0 || L.truthy(r.deleted)) return;
+    const ym = k.slice(SNAP_PREFIX.length);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) return;
+    const v = readJson(settings, k, null);
+    if (v && typeof v === 'object' && Array.isArray(v.rows)) out[ym] = v;
+  });
+  return out;
+}
+export function snapRow(settings, ym, snap, now) {
+  return metaRow(settings, SNAP_PREFIX + ym, snap, 'month-end stocks', now);
+}
+export function snapDeleteRow(settings, ym, now) { return deleteRow(settings, SNAP_PREFIX + ym, now); }
+
 /** 월별 메모 */
 export function readNote(settings, ym) {
   const r = rawRow(settings, NOTE_PREFIX + ym);

@@ -716,6 +716,7 @@ export function render(api) {
     const totalPl = L.round(totalV - totalBook, 2);
     const ages = rows.filter((r) => r.at).map((r) => F.ageOf(r.at));
     const oldest = ages.length ? ages.reduce((a, b) => (a.hours >= b.hours ? a : b)) : null;
+    const dt = F.dayTotals(rows);
     const msg = ws.msg.stocks;
     const status = h('div', { class: 'wl-status' + (msg ? ' ' + msg.kind : ''), id: 'wl-s-status', role: 'status', 'aria-live': 'polite' }, msg ? msg.text : '');
     const upd = h('button', { type: 'button', class: 'btn', id: 'wl-s-update', onclick: () => updatePrices(upd, status) }, icon('sync', 18), 'Update prices (시세 갱신)');
@@ -724,11 +725,13 @@ export function render(api) {
       el('div', 'wl-head', el('div', 'ti', sectTitle('Holdings value', '보유 종목 평가'), el('span', 'sub', 'CAD 기준 · 평가액 = 수량 × 시세'))),
       el('div', 'wl-tiles',
         tile('Market value (평가액)', rows.length ? fmt(totalV) : '—', priced.length < rows.length ? '시세가 없는 종목 ' + (rows.length - priced.length) + '개는 빠져 있어요' : rows.length + '개 종목', 'big', 'wl-s-total'),
+        tile('Change (변동)', dt.count ? h('span', null, chg(dt.delta, true), ' ', dt.pct === null ? null : chgPct(dt.base + dt.delta, dt.base, true)) : '—',
+          dt.count ? dt.label + (dt.missing ? ' · 이전 시세가 없는 ' + dt.missing + '개 종목은 빠졌어요' : '') : '시세를 날짜를 달리해 두 번 갱신하면 보여줘요', '', 'wl-s-day'),
         tile('Cost (원가)', rows.length ? fmt(totalBook) : '—', '산 금액 합계', '', 'wl-s-book'),
         tile('Gain / loss (손익)', rows.length && totalBook ? h('span', null, chg(totalPl, true), ' ', chgPct(totalV, totalBook, true)) : '—', totalBook ? '원가 대비' : '원가를 넣으면 계산해요', '', 'wl-s-pl'),
         tile('Prices as of (시세 시각)', oldest ? oldest.text : '—', oldest ? (oldest.warn ? '오래됐어요 — 갱신하세요' : '가장 오래된 종목 기준') : '아직 시세가 없어요', oldest && oldest.warn ? 'u-over' : '', 'wl-s-age')),
       el('div', 'btnrow wl-actions', upd, addBtn), status,
-      info('종목을 투자 계좌에 연결하면, 그 계좌의 잔액이 ', h('b', null, '보유 종목 평가액의 합계'), '로 바뀌어 재무상태표에 들어가요 (그 계좌의 현금은 따로 계산되지 않아요). 시세는 버튼을 누를 때만 가져오고, 로그인이 필요해요. 미국 종목(USD)은 환율로 CAD 로 바꿔 저장해요.')));
+      info('종목을 투자 계좌에 연결하면, 그 계좌의 잔액이 ', h('b', null, '보유 종목 평가액의 합계'), '로 바뀌어 재무상태표에 들어가요 (그 계좌의 현금은 따로 계산되지 않아요). 시세는 버튼을 누를 때만 가져오고, 로그인이 필요해요. "변동"은 시세 날짜가 다른 이전 시세와 비교해서, 하루에 여러 번 눌러도 어제와 비교해요. 미국 종목(USD)은 환율로 CAD 로 바꿔 저장해요.')));
 
     if (ws.edit['hold:new']) wrap.append(holdingForm(null, -1));
     const list = el('div', 'wl-holds');
@@ -754,6 +757,7 @@ export function render(api) {
     }
     const unlinked = rows.filter((r) => !r.acct || !r.acctOk);
     if (unlinked.length) wrap.append(note('계좌에 연결하지 않은 종목(' + unlinked.map((r) => r.sym).join(', ') + ')은 이 화면에서만 계산하고 재무상태표에는 들어가지 않아요.'));
+    wrap.append(buysCard(), snapsCard());
     return wrap;
   }
 
@@ -770,7 +774,9 @@ export function render(api) {
     card.append(el('div', 'wl-tiles',
       tile('Value (평가액)', r.value === null ? '시세 없음' : fmt(r.value), r.price === null ? '아래에서 가격을 입력하세요' : fmt(r.price) + ' / 주' + (r.ccy && r.ccy !== 'CAD' ? ' (' + r.ccy + ' ' + r.orig + ' × ' + r.fx + ')' : ''), r.value === null ? 'u-near' : 'big', 'wl-hold-val-' + r.i),
       tile('Cost (원가)', r.book ? fmt(r.book) : '—', r.book && r.shares ? '주당 ' + fmt(L.round(r.book / r.shares, 4)) : '', '', 'wl-hold-book-' + r.i),
-      tile('Gain / loss (손익)', r.pl === null ? '—' : h('span', null, chg(r.pl, true), ' ', chgPct(r.value, r.book, true)), r.pl === null ? '원가와 시세가 있어야 계산해요' : '원가 대비', '', 'wl-hold-pl-' + r.i)));
+      tile('Gain / loss (손익)', r.pl === null ? '—' : h('span', null, chg(r.pl, true), ' ', chgPct(r.value, r.book, true)), r.pl === null ? '원가와 시세가 있어야 계산해요' : '원가 대비', '', 'wl-hold-pl-' + r.i),
+      tile('Change (변동)', r.dayDelta === null ? '—' : h('span', null, chg(r.dayDelta, true), ' ', chgPct(r.value, r.dayBase, true)),
+        r.dayDelta === null ? '날짜가 다른 시세가 두 번 있어야 보여줘요' : F.changeLabel(r.at, r.prevAt) + ' · ' + fmt(r.prevPrice) + ' → ' + fmt(r.price) + (r.ccy && r.ccy !== 'CAD' ? ' (환율 포함)' : ''), '', 'wl-hold-day-' + r.i)));
     const metaLine = [];
     if (age) metaLine.push(el('span', 'wl-age' + (age.warn ? ' warn' : age.stale ? ' stale' : ''), 'Price (시세) ' + age.text + (age.warn ? ' · 오래됐어요' : '')));
     if (r.guess) metaLine.push(el('span', 'wl-age', '통화를 ' + r.ccy + ' 로 추정했어요'));
@@ -798,7 +804,7 @@ export function render(api) {
           markBad(I, c.errors);
           if (!c.ok) { err.textContent = c.first; return; }
           const now = L.nowIso();
-          const entry = F.priceEntry(c.price, c.ccy, api.data.fxRates, now, { manual: true });
+          const entry = F.rollPrev(F.priceEntry(c.price, c.ccy, api.data.fxRates, now, { manual: true }), (api.meta().prices || {})[r.sym]);
           if (!entry) { err.textContent = c.ccy + ' 환율이 아직 없어서 CAD 로 바꿀 수 없어요. 먼저 환율을 갱신하거나 CAD 가격을 입력하세요.'; return; }
           const prices = Object.assign({}, api.meta().prices); prices[r.sym] = entry;
           ws.edit[key] = false;
@@ -845,6 +851,185 @@ export function render(api) {
         delBtn));
   }
 
+  // ───── 매수 기록 (2주마다 사는 것 등) ─────
+  const investAccts = () => accounts.filter((a) => a.type === 'ASSET').sort((x, y) => (kindOf(y) === 'invest') - (kindOf(x) === 'invest'));
+  const sharesText = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 6 });
+
+  function buysCard() {
+    const buys = (api.meta().buys || []).slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    const showAll = !!ws.open['buys-all'];
+    const box = h('section', { class: 'card wl-card', id: 'wl-buys' },
+      el('div', 'wl-head', el('div', 'ti', sectTitle('Purchases', '매수 기록'), el('span', 'sub', '2주마다 사면 날짜 · 수량 · 금액만 넣으세요'))),
+      info('매수를 넣으면 위의 ', h('b', null, '보유 수량과 원가가 자동으로 늘어나요'), '. 월말 기록의 수량도 이 기록으로 계산해요. 이 기록은 장부 거래를 만들지 않아요 — 통장에서 투자 계좌로 돈이 간 것은 거래 화면에서 이체로 따로 적어 주세요.'));
+    if (ws.edit['buy:new']) box.append(buyForm(null));
+    else box.append(el('div', 'btnrow', h('button', { type: 'button', class: 'btn secondary', id: 'wl-buy-add', onclick: () => { ws.edit['buy:new'] = true; paint(); } }, icon('plus', 18), 'Add purchase (매수 추가)')));
+    if (!buys.length && !ws.edit['buy:new']) box.append(note('아직 매수 기록이 없어요. 지금의 보유 수량은 그대로 두고, 앞으로 산 것부터 넣으면 돼요.'));
+    (showAll ? buys : buys.slice(0, 8)).forEach((b) => {
+      if (ws.edit['buy:' + b.id]) { box.append(buyForm(b)); return; }
+      const a = b.acct ? accMap.get(String(b.acct)) : null;
+      const avg = Number(b.shares) > 0 ? L.round(Number(b.cost) / Number(b.shares), 4) : 0;
+      box.append(el('div', 'wl-acctrow', el('div', 'mid', el('b', null, b.date + ' · ' + b.sym),
+        el('div', 'wl-s', sharesText(b.shares) + '주 · 주당 ' + fmt(avg) + (a ? ' · ' + L.accLabel(a) : '') + (b.note ? ' · ' + b.note : ''))),
+      el('div', 'amt', el('b', null, fmt(Number(b.cost))),
+        h('button', { type: 'button', class: 'rowbtn', id: 'wl-buy-edit-' + b.id, 'aria-label': 'Edit purchase (매수 수정)', onclick: () => { ws.edit['buy:' + b.id] = true; paint(); } }, icon('edit', 20)))));
+    });
+    if (buys.length > 8) box.append(el('div', 'btnrow', h('button', { type: 'button', class: 'btn secondary sm', id: 'wl-buys-more', onclick: () => { ws.open['buys-all'] = !showAll; paint(); } }, showAll ? 'Show fewer (접기)' : 'Show all ' + buys.length + ' (전체 보기)')));
+    return box;
+  }
+
+  function buyForm(b0) {
+    const key = b0 ? 'buy:' + b0.id : 'buy:new';
+    const pre = (n) => 'wl-b-' + (b0 ? b0.id : 'new') + '-' + n;
+    const cur = api.meta();
+    const d = b0 ? { date: b0.date, sym: b0.sym, acct: String(b0.acct || ''), shares: String(b0.shares), cost: String(b0.cost) } : F.nextBuyDefaults(cur.buys, cur.holdings, today);
+    const invest = investAccts();
+    const I = {
+      date: inp(pre('date'), d.date, { type: 'date', label: 'Date (매수일)' }),
+      sym: inp(pre('sym'), d.sym, { ph: '예: TD.TO', label: 'Ticker (종목 코드)' }),
+      shares: inp(pre('shares'), d.shares, { ph: '예: 5', label: 'Shares (수량)' }),
+      cost: inp(pre('cost'), d.cost, { ph: '예: 480.50', label: 'Total cost (산 금액)' }),
+      note: inp(pre('note'), b0 ? b0.note || '' : '', { ph: '(선택) 메모', label: 'Note (메모)' })
+    };
+    ['sym', 'note'].forEach((k) => { I[k].setAttribute('inputmode', 'text'); I[k].setAttribute('spellcheck', 'false'); });
+    I.sym.setAttribute('autocapitalize', 'characters');
+    const acct = sel(pre('acct'), [['', 'Not linked (연결 안 함)']].concat(invest.map((a) => [a.account_id, L.accLabel(a)])), b0 ? d.acct : (d.acct || (invest.find((a) => kindOf(a) === 'invest') || {}).account_id || ''));
+    const err = h('div', { class: 'err', id: pre('err'), role: 'alert' });
+    const rowsOf = (list) => [rowOf(M.KEYS_META.buys, list.buys, 'buys'), rowOf(M.KEYS_META.holdings, list.holdings, 'holdings')];
+    let confirmDel = false;
+    const delBtn = b0 ? h('button', { type: 'button', class: 'btn danger', id: pre('remove'), onclick: () => {
+      if (!confirmDel) { confirmDel = true; delBtn.textContent = 'Tap again to remove (한 번 더 누르면 삭제)'; return; }
+      const m = api.meta();
+      const rv = F.revertBuy(m.holdings || [], b0);
+      ws.edit[key] = false;
+      save(rowsOf({ buys: (m.buys || []).filter((x) => x.id !== b0.id), holdings: rv.list }),
+        '매수 기록을 지웠어요. 보유 수량에서도 뺐어요.' + (rv.found ? (rv.short ? ' (보유 수량이 모자라 0 으로 맞췄어요.)' : '') : ' (보유 목록에 그 종목이 없어 수량은 그대로 뒀어요.)'), delBtn);
+    } }, icon('trash', 16), 'Remove (삭제)') : null;
+    return h('section', { class: 'card wl-card wl-form', id: pre('form') },
+      el('div', 'wl-sub', b0 ? 'Edit purchase (매수 수정)' : 'Add purchase (매수 추가)'),
+      el('div', 'two wl-two', field('Date (매수일)', I.date), field('Ticker (종목 코드)', I.sym, '캐나다 종목은 .TO')),
+      el('div', 'two wl-two', field('Shares (수량)', I.shares), field('Total cost (산 금액) $', I.cost, '수수료 포함 총액 (CAD)')),
+      el('div', 'two wl-two', field('Account (투자 계좌)', acct), field('Note (메모)', I.note)),
+      err,
+      el('div', 'btnrow',
+        h('button', { type: 'button', class: 'btn', id: pre('save'), onclick: (e) => {
+          const r = F.checkBuy({ date: I.date.value, sym: I.sym.value, shares: I.shares.value, cost: I.cost.value, acct: acct.value, note: I.note.value }, today);
+          markBad(I, r.errors);
+          if (!r.ok) { err.textContent = r.first; return; }
+          const m = api.meta();
+          let holdings = (m.holdings || []).slice();
+          let extra = '';
+          if (b0) { const rv = F.revertBuy(holdings, b0); holdings = rv.list; if (rv.short) extra = ' (이전 기록보다 보유 수량이 적어서 0 부터 다시 계산했어요.)'; }
+          holdings = F.applyBuy(holdings, r.cfg);
+          const buys = (m.buys || []).filter((x) => !b0 || x.id !== b0.id).concat([Object.assign({ id: b0 ? b0.id : L.newId('b') }, r.cfg)]);
+          if (JSON.stringify(buys).length > 40000) { err.textContent = '매수 기록이 너무 많아요 (약 400건). 오래된 기록을 지운 뒤 다시 저장하세요.'; return; }
+          ws.edit[key] = false;
+          save(rowsOf({ buys, holdings }), '매수를 저장했어요. 보유 수량과 원가에 더했어요.' + extra, e.currentTarget);
+        } }, icon('check', 18), 'Save (저장)'),
+        h('button', { type: 'button', class: 'btn secondary', id: pre('cancel'), onclick: () => { ws.edit[key] = false; paint(); } }, 'Cancel (취소)'),
+        delBtn));
+  }
+
+  // ───── 월말 기록 ─────
+  const defaultSnapYm = () => {
+    const snaps = api.meta().snaps || {};
+    const t = L.monthOf(today);
+    for (let i = 1; i <= 24; i++) { const k = V.addMonths(t, -i); if (!snaps[k]) return k; }
+    return t;
+  };
+
+  function snapsCard() {
+    const m = api.meta();
+    const series = F.snapSeries(m.snaps || {}, m.buys || []);
+    const box = h('section', { class: 'card wl-card', id: 'wl-snaps' },
+      el('div', 'wl-head', el('div', 'ti', sectTitle('Month-end history', '월말 기록'), el('span', 'sub', '달마다 마지막 날의 수량 · 시세 · 평가액'))),
+      info('월말 기록을 넣으면 그 달의 재무상태표와 순자산이 ', h('b', null, '그 달 말 평가액'), '으로 계산돼요. 기록이 없는 달은 지금 시세로 계산돼요. 지난 달 가격은 증권사 앱·명세서의 월말 종가를 보고 넣으세요. 매달 말에는 시세를 갱신한 뒤 "지금 시세로 채우기"를 누르면 편해요.'));
+    if (ws.edit['snap']) box.append(snapForm(String(ws.edit['snap'])));
+    else box.append(el('div', 'btnrow', h('button', { type: 'button', class: 'btn secondary', id: 'wl-snap-add', onclick: () => { ws.edit['snap'] = defaultSnapYm(); paint(); } }, icon('plus', 18), 'Add month-end (월말 추가)')));
+    if (!series.length && !ws.edit['snap']) box.append(note('아직 월말 기록이 없어요. "Add month-end (월말 추가)" 로 9월 말, 8월 말처럼 한 달씩 넣을 수 있어요.'));
+    if (series.length >= 2) {
+      box.append(el('div', 'wl-sub', 'Value vs cost (평가액 vs 원가) · 월말'),
+        el('div', 'wl-chart', track(lineChart({
+          title: 'Month-end stocks', labels: series.map((r) => L.monthLabel(r.ym)), height: 220, fmt: (n) => fmt(n),
+          series: [{ key: 'val', name: 'Value (평가액)', color: 'var(--c3)', values: series.map((r) => r.value) }, { key: 'cost', name: 'Cost (원가)', color: 'var(--c1)', values: series.map((r) => r.book), dashed: true }]
+        }))));
+    }
+    series.slice().reverse().forEach((r) => {
+      const detail = r.delta === null ? el('span', 'wl-s', '첫 기록')
+        : h('span', { class: 'wl-s' }, chg(r.delta, true), ' ' + (r.adjacent ? '전월 대비' : L.monthLabel(r.prevYm) + ' 대비') + ' · 새로 산 ' + fmt(r.bought) + ' + 시세 ' + signed(r.market));
+      box.append(el('div', 'wl-acctrow', el('div', 'mid', el('b', null, L.monthLabel(r.ym)), el('div', 'wl-s', r.count + '개 종목 · 원가 ' + fmt(r.book) + (r.pl === null ? '' : ' · 손익 ' + signed(r.pl)))),
+        el('div', 'amt', el('b', null, fmt(r.value)), detail,
+          h('button', { type: 'button', class: 'rowbtn', id: 'wl-snap-edit-' + r.ym, 'aria-label': 'Edit ' + L.monthLabel(r.ym) + ' (수정)', onclick: () => { ws.edit['snap'] = r.ym; paint(); } }, icon('edit', 20)))));
+    });
+    return box;
+  }
+
+  function snapForm(ym) {
+    const m = api.meta();
+    const snaps = m.snaps || {};
+    const existing = snaps[ym] || null;
+    const ccyOf = (sym) => (F.quoteCcy(sym, ((m.prices || {})[sym] || {}).ccy).ccy === 'USD' ? 'USD' : 'CAD');
+    const months = [];
+    for (let k = L.monthOf(today), i = 0; i < 37; i++, k = V.addMonths(k, -1)) months.push(k);
+    if (months.indexOf(ym) < 0) months.push(ym);
+    let base;
+    if (existing) {
+      base = existing.rows.map((r) => ({ sym: r.sym, acct: String(r.acct || ''), shares: String(r.shares), price: String(r.orig !== undefined && r.orig !== null ? r.orig : r.price), ccy: r.ccy === 'USD' ? 'USD' : 'CAD', book: r.book ? String(r.book) : '' }));
+      (m.holdings || []).forEach((hd) => { if (!base.some((r) => r.sym === hd.sym && r.acct === String(hd.acct || ''))) base.push({ sym: hd.sym, acct: String(hd.acct || ''), shares: '', price: '', ccy: ccyOf(hd.sym), book: '' }); });
+    } else {
+      base = F.holdingsAt(m.holdings || [], m.buys || [], V.lastDay(ym)).map((r) => ({ sym: r.sym, acct: r.acct, shares: String(r.shares), price: '', ccy: ccyOf(r.sym), book: r.book ? String(r.book) : '' }));
+    }
+    const pre = (n) => 'wl-snap-' + n;
+    const I = {}, ccys = [];
+    const rowEls = base.map((r, i) => {
+      I[i + ':shares'] = inp(pre(i + '-shares'), r.shares, { ph: '수량', label: r.sym + ' shares (수량)' });
+      I[i + ':price'] = inp(pre(i + '-price'), r.price, { ph: '예: 95.30', label: r.sym + ' price per share (주당 가격)' });
+      I[i + ':book'] = inp(pre(i + '-book'), r.book, { ph: '원가 합계', label: r.sym + ' cost (원가)' });
+      const c = sel(pre(i + '-ccy'), [['CAD', 'CAD'], ['USD', 'USD']], r.ccy);
+      ccys.push(c);
+      const a = r.acct ? accMap.get(r.acct) : null;
+      return el('div', null, el('div', 'wl-sub', r.sym + (a ? ' · ' + L.accLabel(a) : '')),
+        el('div', 'two wl-two', field('Shares (수량)', I[i + ':shares']), field('Price per share (주당 가격)', I[i + ':price'])),
+        el('div', 'two wl-two', field('Currency (통화)', c), field('Cost (원가) $', I[i + ':book'], '비워도 돼요')));
+    });
+    const err = h('div', { class: 'err', id: pre('err'), role: 'alert' });
+    const monthSel = sel(pre('month'), months.map((k) => [k, L.monthLabel(k) + (snaps[k] ? ' ✓' : '')]), ym, (e) => { ws.edit['snap'] = e.target.value; paint(); });
+    let confirmDel = false;
+    const delBtn = existing ? h('button', { type: 'button', class: 'btn danger', id: pre('remove'), onclick: () => {
+      if (!confirmDel) { confirmDel = true; delBtn.textContent = 'Tap again to remove (한 번 더 누르면 삭제)'; return; }
+      const row = M.snapDeleteRow(api.data.settings, ym, L.nowIso());
+      ws.edit['snap'] = false;
+      if (row) save(row, L.monthLabel(ym) + ' 월말 기록을 지웠어요. 그 달은 다시 지금 시세로 계산돼요.', delBtn); else paint();
+    } }, icon('trash', 16), 'Remove (삭제)') : null;
+    const fillBtn = h('button', { type: 'button', class: 'btn secondary', id: pre('fill'), onclick: () => {
+      let n = 0;
+      base.forEach((r, i) => {
+        const q = (m.prices || {})[r.sym];
+        if (!q || !(Number(q.price) > 0)) return;
+        I[i + ':price'].value = String(q.orig !== undefined && q.orig !== null ? q.orig : q.price);
+        ccys[i].value = q.ccy === 'USD' ? 'USD' : 'CAD';
+        n++;
+      });
+      api.toast(n ? n + '개 종목에 지금 시세를 채웠어요. 그 달 말 가격과 다르면 고치세요.' : '채울 시세가 없어요. 먼저 "Update prices (시세 갱신)" 를 누르세요.');
+    } }, icon('sync', 18), 'Fill with current prices (지금 시세로 채우기)');
+    return h('section', { class: 'card wl-card wl-form', id: pre('form') },
+      el('div', 'wl-sub', existing ? 'Edit month-end (월말 수정)' : 'Add month-end (월말 추가)'),
+      field('Month-end of (어느 달 말)', monthSel, existing ? '이미 기록이 있는 달이에요. 저장하면 덮어써요' : '매수 기록으로 그 달 말의 수량을 자동 계산해 채웠어요. 다르면 고치세요'),
+      base.length ? rowEls : note('채울 종목이 없어요. 먼저 보유 종목을 추가하거나, 그 달 말에 없던 종목이라면 다른 달을 고르세요.'),
+      err,
+      el('div', 'btnrow',
+        h('button', { type: 'button', class: 'btn', id: pre('save'), disabled: !base.length, onclick: (e) => {
+          const f = { rows: base.map((r, i) => ({ sym: r.sym, acct: r.acct, shares: I[i + ':shares'].value, price: I[i + ':price'].value, ccy: ccys[i].value, book: I[i + ':book'].value })) };
+          const r = F.checkSnap(f, api.data.fxRates, ym, L.nowIso());
+          markBad(I, r.errors);
+          if (!r.ok) { err.textContent = r.first; return; }
+          ws.edit['snap'] = false;
+          save(M.snapRow(api.data.settings, ym, r.snap, L.nowIso()), L.monthLabel(ym) + ' 월말 기록을 저장했어요.', e.currentTarget);
+        } }, icon('check', 18), 'Save (저장)'),
+        base.length ? fillBtn : null,
+        h('button', { type: 'button', class: 'btn secondary', id: pre('cancel'), onclick: () => { ws.edit['snap'] = false; paint(); } }, 'Cancel (취소)'),
+        delBtn));
+  }
+
   async function updatePrices(btn, status) {
     const hs = api.meta().holdings || [];
     const syms = Array.from(new Set(hs.map((x) => String(x.sym).toUpperCase())));
@@ -870,12 +1055,14 @@ export function render(api) {
       const q = quotes[s];
       if (!q || !(Number(q.price) > 0)) { missing.push(s); return; }
       const c = F.quoteCcy(s, q.currency);
-      const entry = F.priceEntry(Number(q.price), c.ccy, api.data.fxRates, q.asOf || now, c.guess ? { guess: true } : null);
+      const entry = F.rollPrev(F.priceEntry(Number(q.price), c.ccy, api.data.fxRates, q.asOf || now, c.guess ? { guess: true } : null), (api.meta().prices || {})[s]);
       if (!entry) { noFx.push(s + ' (' + c.ccy + ')'); return; }
       prices[s] = entry; gotList.push(s);
     });
     const parts = [];
     if (gotList.length) parts.push(gotList.length + '개 종목 시세를 갱신했어요.');
+    const dtNow = F.dayTotals(F.holdingRows(hs, prices, accMap));
+    if (gotList.length && dtNow.count) parts.push(dtNow.label + ' ' + (dtNow.delta < 0 ? '▼ −' : dtNow.delta > 0 ? '▲ +' : '') + fmt(Math.abs(dtNow.delta)) + (dtNow.pct === null ? '' : ' (' + (dtNow.pct > 0 ? '+' : '') + dtNow.pct + '%)') + (dtNow.missing ? ' · 이전 시세가 없는 ' + dtNow.missing + '개 종목은 빠졌어요.' : '.'));
     if (missing.length) parts.push('시세를 찾지 못한 종목: ' + missing.join(', ') + ' — 종목 코드가 맞는지 확인하거나(캐나다 종목은 .TO) 가격을 직접 입력하세요.');
     if (noFx.length) parts.push('환율이 없어 CAD 로 바꾸지 못한 종목: ' + noFx.join(', ') + ' — Settings 에서 환율을 갱신하거나 가격을 직접 입력하세요.');
     const kind = gotList.length && !missing.length && !noFx.length ? 'ok' : gotList.length ? 'warn' : 'bad';

@@ -236,13 +236,17 @@ export function holdingRows(holdings, prices, accMap) {
   return (holdings || []).map((h, i) => {
     const q = prices && prices[h.sym];
     const price = q && nz(q.price) > 0 ? nz(q.price) : null;
+    const prevPrice = q && q.prev && nz(q.prev.price) > 0 ? nz(q.prev.price) : null;
     const value = price === null ? null : r2(nz(h.shares) * price);
     const book = nz(h.book);
     const a = h.acct ? accMap.get(String(h.acct)) : null;
     return {
       i, sym: h.sym, shares: nz(h.shares), book, acct: String(h.acct || ''), acctName: a ? L.accLabel(a) : '', acctOk: !!a,
       price, ccy: q ? q.ccy || 'CAD' : '', orig: q && q.orig ? q.orig : null, fx: q && q.fx ? q.fx : null, at: q ? q.at : '', guess: !!(q && q.guess), manual: !!(q && q.manual),
-      value, pl: value === null || !book ? null : r2(value - book), plPct: value === null || !book ? null : r2((value - book) / book * 100)
+      value, pl: value === null || !book ? null : r2(value - book), plPct: value === null || !book ? null : r2((value - book) / book * 100),
+      prevPrice, prevAt: prevPrice === null ? '' : q.prev.at,
+      dayDelta: price === null || prevPrice === null ? null : r2(nz(h.shares) * (price - prevPrice)),
+      dayBase: price === null || prevPrice === null ? null : r2(nz(h.shares) * prevPrice)
     };
   });
 }
@@ -258,6 +262,170 @@ export function acctTotals(rows) {
     m.set(r.acct, e);
   });
   return m;
+}
+
+// ───────── 하루 변동 (어제 대비) ─────────
+const p2 = (n) => String(n).padStart(2, '0');
+/** ISO 시각 → 이 기기 기준 날짜 'YYYY-MM-DD' (읽을 수 없으면 '') */
+export function dayOf(iso) {
+  const t = Date.parse(iso);
+  if (!iso || Number.isNaN(t)) return '';
+  const d = new Date(t);
+  return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+}
+/** 두 날짜('YYYY-MM-DD') 사이의 일수 (b - a). 읽을 수 없으면 null */
+export function dayDiff(a, b) {
+  if (!isDate(a) || !isDate(b)) return null;
+  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
+}
+/**
+ * 새 시세에 "이전 날짜의 시세(prev)"를 붙입니다.
+ * 시세의 날짜가 바뀐 경우에만 prev 를 이전 시세로 갈아 끼우고, 같은 날 다시 갱신하면 prev 를 그대로 둡니다.
+ * (그래서 하루에 여러 번 눌러도 "어제 대비" 가 5분 전 대비로 바뀌지 않아요.)
+ */
+export function rollPrev(entry, old) {
+  if (!entry) return entry;
+  const out = Object.assign({}, entry);
+  delete out.prev;
+  if (!old) return out;
+  const dNew = dayOf(entry.at), dOld = dayOf(old.at);
+  if (nz(old.price) > 0 && dNew && dOld && dNew > dOld) out.prev = { price: old.price, at: old.at };
+  else if (old.prev && nz(old.prev.price) > 0) out.prev = { price: old.prev.price, at: old.prev.at };
+  return out;
+}
+/** "어제 대비" · "10/14 대비" 같은 이름표 */
+export function changeLabel(at, prevAt) {
+  const a = dayOf(at), b = dayOf(prevAt);
+  const d = dayDiff(b, a);
+  if (d === 1) return '어제 대비';
+  if (!b) return '이전 시세 대비';
+  return Number(b.slice(5, 7)) + '/' + Number(b.slice(8, 10)) + ' 대비';
+}
+/** 종목들의 하루 변동 합계: { delta, base, pct, count, missing, label } (이전 시세가 있는 종목만 계산) */
+export function dayTotals(rows) {
+  const ok = (rows || []).filter((r) => r.dayDelta !== null && r.dayDelta !== undefined);
+  const delta = r2(ok.reduce((s, r) => s + r.dayDelta, 0));
+  const base = r2(ok.reduce((s, r) => s + r.dayBase, 0));
+  const labels = Array.from(new Set(ok.map((r) => changeLabel(r.at, r.prevAt))));
+  return { delta, base, pct: base > 0.004 ? r2(delta / base * 100) : null, count: ok.length, missing: (rows || []).length - ok.length, label: labels.length === 1 ? labels[0] : '이전 시세 대비' };
+}
+
+// ───────── 매수 기록 (2주마다 사는 것 등) ─────────
+export function addDays(date, n) {
+  const d = new Date(date + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.getUTCFullYear() + '-' + p2(d.getUTCMonth() + 1) + '-' + p2(d.getUTCDate());
+}
+export function checkBuy(f, today) {
+  const R = Res();
+  const date = String(f.date || '').trim();
+  const sym = String(f.sym || '').trim().toUpperCase();
+  const shares = parseNum(f.shares), cost = parseNum(f.cost);
+  if (!isDate(date)) R.err('date', '매수일을 날짜로 입력하세요. (예: 2026-10-14)');
+  else if (today && date > today) R.err('date', '매수일이 오늘보다 뒤예요. 날짜를 확인하세요.');
+  if (!SYMBOL_RE.test(sym)) R.err('sym', '종목 코드는 영문·숫자·점(.)으로 입력하세요. (예: TD.TO, AAPL)');
+  if (shares === null || badNum(shares) || !(shares > 0 && shares <= 1e9)) R.err('shares', '산 수량은 0보다 큰 숫자로 입력하세요. (예: 5)');
+  if (cost === null || badNum(cost) || cost < 0) R.err('cost', '산 금액(수수료 포함 총액)을 입력하세요. (예: 480.50)');
+  if (R.bad()) return R.out();
+  return R.out({ cfg: { date, sym, acct: String(f.acct || ''), shares: Math.round(shares * 1e6) / 1e6, cost: r2(cost), note: String(f.note || '').trim().slice(0, 60) } });
+}
+const sameHolding = (h, b) => String(h.sym).toUpperCase() === String(b.sym).toUpperCase() && String(h.acct || '') === String(b.acct || '');
+/** 매수 한 건을 보유 종목에 더하기 (없는 종목이면 새로 만듦). 새 목록을 돌려줍니다. */
+export function applyBuy(holdings, buy) {
+  const list = (holdings || []).map((h) => Object.assign({}, h));
+  const i = list.findIndex((h) => sameHolding(h, buy));
+  if (i < 0) { list.push({ sym: String(buy.sym).toUpperCase(), shares: Math.round(nz(buy.shares) * 1e6) / 1e6, book: r2(nz(buy.cost)), acct: String(buy.acct || '') }); return list; }
+  list[i].shares = Math.round((nz(list[i].shares) + nz(buy.shares)) * 1e6) / 1e6;
+  list[i].book = r2(nz(list[i].book) + nz(buy.cost));
+  return list;
+}
+/** 매수 한 건을 보유 종목에서 빼기 (고치거나 지울 때). { list, found, short } — short 는 보유 수량이 모자라 0 으로 맞춘 경우 */
+export function revertBuy(holdings, buy) {
+  const list = (holdings || []).map((h) => Object.assign({}, h));
+  const i = list.findIndex((h) => sameHolding(h, buy));
+  if (i < 0) return { list, found: false, short: false };
+  const left = Math.round((nz(list[i].shares) - nz(buy.shares)) * 1e6) / 1e6;
+  const short = left < -1e-9;
+  if (left <= 1e-9) { list.splice(i, 1); return { list, found: true, short }; }
+  list[i].shares = left;
+  list[i].book = Math.max(0, r2(nz(list[i].book) - nz(buy.cost)));
+  return { list, found: true, short };
+}
+/** 새 매수 입력창의 기본값: 지난번 매수를 그대로 가져오고 날짜는 2주 뒤 (오늘을 넘으면 오늘) */
+export function nextBuyDefaults(buys, holdings, today) {
+  const last = (buys || []).slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))[0];
+  if (!last) { const h0 = (holdings || [])[0]; return { date: today, sym: h0 ? h0.sym : '', acct: h0 ? String(h0.acct || '') : '', shares: '', cost: '' }; }
+  const d = addDays(last.date, 14);
+  return { date: d > today ? today : d, sym: last.sym, acct: String(last.acct || ''), shares: String(last.shares), cost: String(last.cost) };
+}
+/** 그 날(ymd)까지의 보유: 지금 보유에서 그 날 이후의 매수를 뺀 값. 그때 없던 종목은 빠집니다. */
+export function holdingsAt(holdings, buys, ymd) {
+  const after = new Map();
+  (buys || []).forEach((b) => {
+    if (String(b.date) <= ymd) return;
+    const k = String(b.sym).toUpperCase() + '|' + String(b.acct || '');
+    const e = after.get(k) || { shares: 0, cost: 0 };
+    e.shares += nz(b.shares); e.cost += nz(b.cost);
+    after.set(k, e);
+  });
+  return (holdings || []).map((h) => {
+    const a = after.get(String(h.sym).toUpperCase() + '|' + String(h.acct || '')) || { shares: 0, cost: 0 };
+    const shares = Math.round((nz(h.shares) - a.shares) * 1e6) / 1e6;
+    return { sym: h.sym, acct: String(h.acct || ''), shares: shares > 1e-9 ? shares : 0, book: Math.max(0, r2(nz(h.book) - a.cost)) };
+  }).filter((r) => r.shares > 0);
+}
+
+// ───────── 월말 기록 ─────────
+/**
+ * 월말 입력창 → 저장할 기록. f.rows = [{sym, acct, shares, price, ccy, book}] (모두 글자)
+ * 수량과 가격을 모두 비운 줄은 건너뜁니다. 외화 가격은 그 달 마지막 날의 환율로 CAD 로 바꿔 저장합니다.
+ */
+export function checkSnap(f, fxRates, ym, now) {
+  const R = Res();
+  const rows = [];
+  (f.rows || []).forEach((r, i) => {
+    const shares = parseNum(r.shares), price = parseNum(r.price), book = parseNum(r.book);
+    if ((shares === null || shares === 0) && price === null) return;
+    if (shares === null || badNum(shares) || !(shares > 0 && shares <= 1e9)) { R.err(i + ':shares', r.sym + ' 수량은 0보다 큰 숫자로 입력하세요. 그 달에 없던 종목이면 수량과 가격을 비우세요.'); return; }
+    if (price === null || badNum(price) || !(price > 0)) { R.err(i + ':price', r.sym + ' 그 달 말 가격(주당)을 0보다 큰 숫자로 입력하세요.'); return; }
+    if (badNum(book) || (book !== null && book < 0)) { R.err(i + ':book', r.sym + ' 원가는 0 이상의 숫자로 입력하세요. 모르면 비워 두세요.'); return; }
+    const ccy = r.ccy === 'USD' ? 'USD' : 'CAD';
+    const c = toCad(price, ccy, fxRates, V.lastDay(ym));
+    if (!c) { R.err(i + ':price', ccy + ' 환율이 아직 없어서 CAD 로 바꿀 수 없어요. 먼저 환율을 갱신하거나 CAD 가격을 입력하세요.'); return; }
+    const row = { sym: String(r.sym).toUpperCase(), acct: String(r.acct || ''), shares: Math.round(shares * 1e6) / 1e6, book: book === null ? 0 : r2(book), price: c.cad, ccy };
+    if (ccy !== 'CAD') { row.orig = price; row.fx = c.fx; }
+    rows.push(row);
+  });
+  if (!R.bad() && !rows.length) R.err('0:shares', '저장할 종목이 없어요. 수량과 가격을 하나 이상 입력하세요.');
+  if (R.bad()) return R.out();
+  return R.out({ snap: { at: now || new Date().toISOString(), rows } });
+}
+export function snapTotals(snap) {
+  const rows = (snap && snap.rows) || [];
+  const value = r2(rows.reduce((s, r) => s + nz(r.shares) * nz(r.price), 0));
+  const book = r2(rows.reduce((s, r) => s + nz(r.book), 0));
+  return { value, book, pl: book > 0 ? r2(value - book) : null, count: rows.length };
+}
+/**
+ * 월말 기록 목록 (오래된 달부터). 이전 기록 대비 변화를 "새로 산 돈" 과 "시세 변동" 으로 나눠 보여줍니다.
+ * bought = 이전 기록의 월말 다음 날부터 이번 월말까지의 매수 금액 합계, market = 전체 변화 − bought
+ */
+export function snapSeries(snaps, buys) {
+  const yms = Object.keys(snaps || {}).sort();
+  return yms.map((ym, i) => {
+    const t = snapTotals(snaps[ym]);
+    const prevYm = i ? yms[i - 1] : '';
+    const out = { ym, value: t.value, book: t.book, pl: t.pl, count: t.count, prevYm, delta: null, bought: null, market: null, adjacent: false };
+    if (prevYm) {
+      const pv = snapTotals(snaps[prevYm]).value;
+      const from = V.lastDay(prevYm), to = V.lastDay(ym);
+      out.delta = r2(t.value - pv);
+      out.bought = r2((buys || []).filter((b) => String(b.date) > from && String(b.date) <= to).reduce((s, b) => s + nz(b.cost), 0));
+      out.market = r2(out.delta - out.bought);
+      out.adjacent = V.addMonths(prevYm, 1) === ym;
+    }
+    return out;
+  });
 }
 
 // ───────── 발생 (재산세 등) ─────────

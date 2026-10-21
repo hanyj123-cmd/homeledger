@@ -202,7 +202,7 @@ export function accrualBalance(cfg, items, ym) {
  * meta = { loans:{id:cfg}, debts:{id:{apr,limit}}, assets:{id:cfg}, holdings:[{sym,shares,book,acct}], prices:{}, accrual:cfg }
  * 돌려주는 값: Map(account_id → 그 달 말 값 (자산·부채 모두 양수))
  */
-export function overridesFor(meta, items, ym) {
+export function overridesFor(meta, items, ym, opts) {
   const out = new Map();
   if (!meta) return out;
   Object.keys(meta.loans || {}).forEach((id) => {
@@ -215,12 +215,22 @@ export function overridesFor(meta, items, ym) {
     if (v !== null) out.set(String(id), v);
   });
   const byAcct = new Map();
-  (meta.holdings || []).forEach((h) => {
-    if (!h.acct) return;
-    const q = meta.prices && meta.prices[h.sym];
-    if (!q || !q.price) return;
-    byAcct.set(String(h.acct), (byAcct.get(String(h.acct)) || 0) + numOr0(h.shares) * numOr0(q.price));
-  });
+  // 지난 달에 "월말 기록"이 있으면 그 달 말의 수량·시세로 계산합니다. (이번 달과 기록이 없는 달은 지금 보유 종목 × 최근 시세)
+  const todayYm = (opts && opts.todayYm) || L.todayStr().slice(0, 7);
+  const snap = meta.snaps && meta.snaps[ym];
+  if (snap && Array.isArray(snap.rows) && ym < todayYm) {
+    snap.rows.forEach((r) => {
+      if (!r || !r.acct) return;
+      byAcct.set(String(r.acct), (byAcct.get(String(r.acct)) || 0) + numOr0(r.shares) * numOr0(r.price));
+    });
+  } else {
+    (meta.holdings || []).forEach((h) => {
+      if (!h.acct) return;
+      const q = meta.prices && meta.prices[h.sym];
+      if (!q || !q.price) return;
+      byAcct.set(String(h.acct), (byAcct.get(String(h.acct)) || 0) + numOr0(h.shares) * numOr0(q.price));
+    });
+  }
   byAcct.forEach((v, id) => { if (!out.has(id)) out.set(id, r2(v)); });
   if (meta.accrual && meta.accrual.acct) {
     const v = accrualBalance(meta.accrual, items || [], ym);
