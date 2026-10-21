@@ -416,15 +416,21 @@ export function makeRecords(form, ctx) {
   const kind = form.kind;
   const ccy = form.currency || 'CAD';
 
-  const amount = round(parseAmount(form.amountText), decimals(ccy));
-  if (!(amount > 0)) return { error: '금액을 올바르게 입력하세요.' };
+  // 기초잔액만 마이너스를 허용합니다 (체킹이 마이너스이거나 카드를 초과 상환한 경우).
+  // 계산은 크기(양수)로 하고, 마지막에 분개와 거래 합계에 부호를 입힙니다.
+  const typed = round(parseAmount(form.amountText), decimals(ccy));
+  const negOpening = kind === 'OPENING' && typed < 0;
+  const amount = negOpening ? -typed : typed;
+  if (!(amount > 0)) return { error: kind === 'OPENING' ? '잔액을 올바르게 입력하세요. (0 은 입력할 수 없어요. 마이너스는 -150 처럼 앞에 − 를 붙이세요)' : '금액을 올바르게 입력하세요.' };
+  const sgn = negOpening ? -1 : 1;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(form.date || '')) return { error: '날짜를 입력하세요.' };
 
   let cad, rate, fxStatus, fxSource = '';
   if (ccy === 'CAD') {
     cad = round(amount, 2); rate = 1; fxStatus = 'ACTUAL';
   } else {
-    const cadIn = parseAmount(form.cadText);
+    const cadIn0 = parseAmount(form.cadText);
+    const cadIn = negOpening ? Math.abs(cadIn0) : cadIn0;
     const rateIn = parseAmount(form.rateText);
     if (cadIn > 0) { cad = round(cadIn, 2); rate = round(cad / amount, 6); fxStatus = 'ACTUAL'; fxSource = 'MANUAL'; }
     else if (rateIn > 0) { cad = round(amount * rateIn, 2); rate = rateIn; fxStatus = 'PROVISIONAL'; fxSource = 'MANUAL'; }
@@ -513,7 +519,7 @@ export function makeRecords(form, ctx) {
     return {
       posting_id: assigned[i] ? assigned[i].posting_id : newId('p'),
       txn_id: txnId, line_id: '', account_id: String(ln[0]),
-      amount_cad: round(sign * lc, 2), amount_orig: round(sign * lo, decimals(ccy)), currency: ccy, fx_rate: rate,
+      amount_cad: round(sign * lc * sgn, 2), amount_orig: round(sign * lo * sgn, decimals(ccy)), currency: ccy, fx_rate: rate,
       memo: ln[5] || '', owner: ln[4] || '', updated_at: now, deleted: false
     };
   });
@@ -526,8 +532,8 @@ export function makeRecords(form, ctx) {
   const base = existing ? existing.txn : {};
   const txn = Object.assign({}, base, {
     txn_id: txnId, date: form.date, merchant: (form.merchant || '').trim(), memo: (form.memo || '').trim(),
-    currency: ccy, subtotal_orig: amount, total_orig: amount, fx_rate: rate, fx_source: fxSource, fx_status: fxStatus,
-    total_cad: cad, source: base.source || 'MANUAL',
+    currency: ccy, subtotal_orig: sgn * amount, total_orig: sgn * amount, fx_rate: rate, fx_source: fxSource, fx_status: fxStatus,
+    total_cad: sgn * cad, source: base.source || 'MANUAL',
     // 미분류(9999)가 더는 없으면 "확인 필요(REVIEW)" 표시는 풀어 줍니다 — 안 그러면 카테고리를 고쳐도 Needs category 가 남습니다
     status: kind === 'OPENING' ? 'MATCHED' : (String(base.status || '').toUpperCase() === 'REVIEW'
       ? (postings.some((p) => !truthy(p.deleted) && String(p.account_id) === '9999') ? 'REVIEW' : 'MATCHED')

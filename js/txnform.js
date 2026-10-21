@@ -236,9 +236,10 @@ export function openForm(api, txnId, defaults) {
     const fxEl = h('div', { class: 'hint', id: 'fx-hint', 'aria-live': 'polite' });
 
     const updateHints = () => {
-      const n = L.parseAmount(f.amountText);
+      const n0 = L.parseAmount(f.amountText);
+      const n = f.kind === 'OPENING' ? Math.abs(n0) : n0;   // 마이너스 기초잔액도 환율 안내는 크기로 계산
       const isExpr = /[^0-9.,\s$]/.test(f.amountText || '');
-      previewEl.textContent = isExpr && Number.isFinite(n) ? '= ' + fmt(L.round(n, dec), f.currency) : '';
+      previewEl.textContent = isExpr && Number.isFinite(n0) ? '= ' + fmt(L.round(n0, dec), f.currency) : '';
       if (isFx) {
         const cad = L.parseAmount(f.cadText);
         const rate = L.parseAmount(f.rateText);
@@ -282,7 +283,7 @@ export function openForm(api, txnId, defaults) {
       oninput: (e) => { f.amountText = e.target.value; updateHints(); },
       onblur: (e) => {
         const n = L.parseAmount(f.amountText);
-        if (Number.isFinite(n) && n > 0) { f.amountText = String(L.round(n, dec)); e.target.value = L.fmtNumber(L.round(n, dec), f.currency); }
+        if (Number.isFinite(n) && (n > 0 || (f.kind === 'OPENING' && n < 0))) { f.amountText = String(L.round(n, dec)); e.target.value = (n < 0 ? '-' : '') + L.fmtNumber(Math.abs(L.round(n, dec)), f.currency); }
         updateHints();
       }
     });
@@ -310,6 +311,10 @@ export function openForm(api, txnId, defaults) {
       previewEl);
 
     const parts = [hero];
+    if (f.kind === 'OPENING') {
+      parts.push(h('div', { class: 'hint', id: 'open-hint' },
+        'Negative balance? Start with − (e.g. −150): an overdrawn account, or a card you overpaid (잔액이 마이너스면 앞에 −를 붙이세요. 예: −150. 마이너스 체킹, 또는 카드를 초과 상환해 잔액이 돌려받을 돈일 때). 위의 − 버튼을 먼저 눌러도 돼요. 카드·대출은 갚을 금액이 +예요.'));
+    }
 
     if (isFx) {
       parts.push(h('section', { class: 'txf-group txf-fx', 'aria-label': 'Foreign currency (외화)' },

@@ -41,7 +41,7 @@ export function columnsOf(it, acct) {
   if (k === 'INCOME') return { inn: amt };
   if (k === 'EXPENSE') return it.desc.flow === 'in' ? { inn: amt } : { out: amt };
   if (k === 'PASSTHROUGH') return it.desc.flow === 'in' ? { inn: amt } : { out: amt };
-  return { move: amt };
+  return { move: k === 'OPENING' && L.num(it.txn.total_cad) < 0 ? -amt : amt };   // 마이너스 기초잔액은 − 로 표시
 }
 
 // 계좌 한 곳의 거래 후 잔액 (날짜 → 입력 순서 → 시간순)
