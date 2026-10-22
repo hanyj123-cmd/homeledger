@@ -70,7 +70,7 @@ export function makeAccountRow(accounts, f, existing, now) {
 // ───────── 삭제 (지출·수입 카테고리, 계좌·카드·대출) ─────────
 // 거래가 하나도 없으면 바로 삭제, 있으면 다른 항목으로 옮긴 뒤 삭제합니다. (거래·영수증 항목·규칙·예산이 함께 옮겨집니다)
 // 시스템 계정(전달 자금 · 기초 잔액 · 미분류)은 지울 수 없고, 대출·자산 평가 설정에서 쓰는 계정은 먼저 그 설정을 정리해야 합니다.
-export const PROTECTED_IDS = [CONFIG.CLEARING_ID, CONFIG.OPENING_ID, '9999'];
+export const PROTECTED_IDS = [CONFIG.CLEARING_ID, CONFIG.CLEARING_CHURCH_ID, CONFIG.OPENING_ID, '9999'];
 const CHUNK = 400;
 
 /** 이 계정을 쓰는 것들의 개수와 목록 */
@@ -105,7 +105,7 @@ export function metaRefs(meta, id) {
 export function moveTargets(accounts, account) {
   const id = String(account.account_id);
   return (accounts || []).filter((a) => !L.truthy(a.deleted) && String(a.account_id) !== id && a.type === account.type &&
-    (L.isActive(a) || false) && (a.type === 'EXPENSE' ? true : String(a.account_id) !== CONFIG.CLEARING_ID && String(a.account_id) !== CONFIG.OPENING_ID));
+    (L.isActive(a) || false) && (a.type === 'EXPENSE' ? true : !L.isClearingId(a.account_id) && String(a.account_id) !== CONFIG.OPENING_ID));
 }
 
 /** 지울 수 있는지 (이유와 함께) */

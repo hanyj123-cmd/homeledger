@@ -24,6 +24,7 @@ import * as xfer from './xfermatch.js';
 import * as paybundle from './paybundle.js';
 import * as RV from './receiptview.js';
 import * as models from './models.js';
+import * as sysacc from './sysaccounts.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, ccy) => L.fmtMoney(n, ccy);
@@ -190,7 +191,7 @@ export async function init() {
   $('drawer-scrim')?.addEventListener('click', () => drill.close());
   onLayout(() => { if (state.d) renderAll(); });
   sync.onStatus(renderChip);
-  sync.onData(async () => { await reload(); renderBody(); autoTasks(); });   // 이체 자동 연결 · 급여일 연동 입력 (동기화·가져오기 후)
+  sync.onData(async () => { await reload(); renderBody(); autoTasks(true); });   // 이체 자동 연결 · 급여일 연동 입력 (동기화·가져오기 후)
   auth.onAuth(() => { sync.refreshStatus().then(renderChip); });
   await reload();
   await sync.refreshStatus();
@@ -199,7 +200,15 @@ export async function init() {
 }
 const xferApi = () => ({ h, toast, state, reload, renderBody });
 // 자동 작업은 차례로 (같은 시트를 동시에 쓰지 않도록)
-async function autoTasks() {
+async function autoTasks(afterSync) {
+  // 교회 전달 자금 · 현금 계정이 없으면 한 번 만들어 줍니다 (시트와 동기화한 뒤에만 — 이미 있는 계정을 모르고 또 만들지 않도록)
+  if (afterSync && !state.sysChecked && auth.getToken() && state.data && (state.data.accounts || []).length) {
+    state.sysChecked = true;
+    try {
+      const rows = sysacc.missingSystemAccounts(state.data.accounts, L.nowIso());
+      if (rows.length) { await sync.saveBatch({ Accounts: rows }, ['Accounts']); await reload(); renderBody(true); }
+    } catch (e) { console.error(e); state.sysChecked = false; }
+  }
   try { await paybundle.autoRun(xferApi()); } catch (e) { console.error(e); }
   try { await xfer.autoMatch(xferApi()); } catch (e) { console.error(e); }
 }

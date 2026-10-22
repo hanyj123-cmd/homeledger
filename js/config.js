@@ -6,12 +6,14 @@ export const CONFIG = {
   BASE_CCY: 'CAD',
   CURRENCIES: ['CAD', 'USD', 'KRW', 'JPY', 'EUR', 'GBP', 'CNY', 'AUD', 'MXN'],
   OWNERS: ['Patrick', 'Ms Kim', 'JY Han', 'Joint'],   // 한윤종 · 김명순 · 한재영 · 공동 (기본: Joint)
-  CLEARING_ID: '2900',   // Passthrough Clearing (전달 자금)
+  CLEARING_ID: '2900',   // Passthrough Clearing — 개인 전달 자금 (누구 몫인지는 소유자로 구분)
+  CLEARING_CHURCH_ID: '2901',   // 교회 전달 자금 (자동으로 만들어집니다)
+  CASH_ID: '1090',       // Cash on hand (현금) — 없으면 자동으로 만들어집니다
   OPENING_ID: '3010',    // Opening Balance Equity (기초 잔액 자본)
   SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines', 'Receipts', 'LineItems', 'Budgets'],
   AUTO_SYNC_MS: 60000,
   RECEIPT_API_URL: 'https://script.google.com/macros/s/AKfycbzMiItzeZw23yPNth8Fk7khP3DP012RoMIxHBrVFvyxc2kwrjHttlSEePdLWf9diNrv/exec',
-  APP_VERSION: '0.28.0'
+  APP_VERSION: '0.29.0'
 };
 
 // 각 시트의 첫 번째 열 = 행의 고유 키

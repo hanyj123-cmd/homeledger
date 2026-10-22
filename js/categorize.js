@@ -3,6 +3,7 @@
 import * as L from './ledger.js';
 import { callApi } from './receipts.js';
 import * as models from './models.js';
+import { isCashAccount } from './sysaccounts.js';
 
 export const SOURCE_LABEL = { rule: 'Remembered (기억함)', history: 'Past txns (과거 거래)', payment: 'Card payment (카드 결제)', keyword: 'Guess (추측)', ai: 'AI guess (AI 추측)', user: 'You (직접 선택)' };
 
@@ -162,6 +163,11 @@ export function makeGuesser(ctx) {
     if (r && ctx.accMap.has(String(r.account_id))) return { accountId: String(r.account_id), source: 'rule', confidence: 1, ruleId: r.rule_id, reason: 'rule' };
     const h = fromHistory(hist, text);
     if (h && ctx.accMap.has(h.accountId)) return Object.assign({ source: 'history' }, h);
+    // ATM · 현금 인출 → 내 현금(Cash on hand) 계정으로 이체 (나간 돈일 때만)
+    if (dir === 'out' && /\b(ATM|ABM)\b|CASH\s*(WITHDRAWAL|ADVANCE|ADV)\b|WITHDRAWAL\s*CASH|\bCASH\s*W\/?D\b/.test(norm(text))) {
+      const cash = (ctx.accounts || []).find((x) => L.isActive(x) && isCashAccount(x) && String(x.account_id) !== String(ctx.statementAccountId));
+      if (cash) return { source: 'keyword', accountId: String(cash.account_id), confidence: 0.85, reason: 'cash' };
+    }
     const p = fromPayment(text, c2);
     if (p) return Object.assign({ source: 'payment' }, p);
     const k = fromKeyword(text, dir, resolve);

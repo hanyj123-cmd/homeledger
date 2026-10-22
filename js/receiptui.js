@@ -210,7 +210,7 @@ function openReview(api, draft, close, show, shell) {
             oninput: (e) => { it.amountText = e.target.value; upd(); } }),
           del),
         h('div', { class: 'rc-item-bot' },
-          h('select', { class: 'rc-cat', 'aria-label': 'Category (카테고리)', onchange: (e) => { it.category_id = e.target.value; } }, catOptions(it.category_id)),
+          draft.pass ? h('span', { class: 'hint rc-passcat' }, 'Passthrough · ' + L.PASS_LABEL[draft.pass] + ' (전달 자금)') : h('select', { class: 'rc-cat', 'aria-label': 'Category (카테고리)', onchange: (e) => { it.category_id = e.target.value; } }, catOptions(it.category_id)),
           ccy === 'CAD' ? h('select', { class: 'rc-tax', 'aria-label': 'Tax (세금)', onchange: (e) => { it.tax_code = e.target.value; upd(); } }, taxOptions(it.tax_code)) : null),
         h('label', { class: 'rc-owner-row' }, h('span', { class: 'rc-owner-lbl' }, 'Whose? (누가 썼나)'),
           h('select', { class: 'rc-item-owner', 'aria-label': 'Owner of this item (이 항목 소유자)', onchange: (e) => { it.owner = e.target.value; } },
@@ -284,6 +284,25 @@ function openReview(api, draft, close, show, shell) {
     rows.push(field('Default owner (기본 소유자) — items can differ (항목별로 바꿀 수 있어요)', h('select', { id: 'rc-owner', onchange: (e) => { draft.owner = e.target.value; draw(); } },
       CONFIG.OWNERS.map((o) => h('option', { value: o, selected: o === draft.owner }, L.ownerLabel(o))))));
 
+    // 환불 · 전달 자금 (영수증도 일반 거래와 똑같이)
+    rows.push(h('label', { class: 'check', id: 'rc-refund-row' },
+      h('input', { type: 'checkbox', id: 'rc-refund', checked: !!draft.refund, onchange: (e) => { draft.refund = e.target.checked; draw(); } }),
+      h('span', null, 'Refund — money came back (환불: 돈이 돌아옴)')));
+    rows.push(h('label', { class: 'check', id: 'rc-pass-row' },
+      h('input', { type: 'checkbox', id: 'rc-pass', checked: !!draft.pass, onchange: (e) => {
+        draft.pass = e.target.checked ? (draft.pass || 'PERSONAL') : '';
+        if (!draft.pass) draft.items.forEach((i) => { if (L.isClearingId(i.category_id)) i.category_id = ''; });
+        draw();
+      } }),
+      h('span', null, 'Passthrough (전달 자금 · 손익에서 제외)')));
+    if (draft.pass) {
+      rows.push(h('div', { class: 'field', id: 'rc-passkind-row' }, h('span', { class: 'lbl' }, 'Whose money? (누구 돈인가)'),
+        h('div', { class: 'txf-own', role: 'radiogroup', 'aria-label': 'Passthrough type (전달 자금 종류)' }, ['PERSONAL', 'CHURCH'].map((k) => h('button', {
+          type: 'button', role: 'radio', class: draft.pass === k ? 'on' : '', 'aria-checked': draft.pass === k ? 'true' : 'false', 'data-passkind': k,
+          onclick: () => { draft.pass = k; draw(); }
+        }, L.PASS_LABEL[k]))),
+        h('span', { class: 'hint' }, draft.pass === 'CHURCH' ? 'Church money — kept out of your spending (교회 돈: 내 지출에서 빠집니다)' : 'Personal money — pick whose it is on each item below (개인 돈: 아래 항목마다 누구 몫인지 소유자를 고르세요)')));
+    }
     rows.push(h('h2', { class: 'sect' }, 'Items (항목) · ' + draft.items.length));
     draft.items.forEach((it, i) => rows.push(itemCard(it, i)));
     rows.push(h('button', { type: 'button', class: 'btn secondary', id: 'rc-additem', onclick: () => {
@@ -353,7 +372,7 @@ function openReview(api, draft, close, show, shell) {
     const pre = R.makeReceiptRecords(draft, { accMap: d.accMap, taxCodes, rules: data.rules, existing: draft._existing || null, now: L.nowIso() });
     if (pre.error) { errEl.textContent = pre.error; return; }
     if (!editing) {
-      const cands = R.findStatementMatches(d.items, { fromId: draft.fromId, totalCad: Math.abs(L.num(pre.txn.total_cad)), date: draft.date, merchant: draft.merchant });
+      const cands = R.findStatementMatches(d.items, { fromId: draft.fromId, totalCad: Math.abs(L.num(pre.txn.total_cad)), date: draft.date, merchant: draft.merchant, refund: !!draft.refund });
       if (cands.length) { askLink(cands); return; }
     }
     return save(null);

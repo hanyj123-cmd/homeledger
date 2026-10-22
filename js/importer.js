@@ -642,7 +642,7 @@ export function buildRecords(rows, ctx) {
         posting_id: L.newId('p'), txn_id: txnId, line_id: '', account_id: String(accId),
         amount_cad: sign * cad, amount_orig: sign * cad, currency: 'CAD', fx_rate: 1, memo: '', updated_at: now, deleted: false
       });
-      const pass = String(target.account_id) === CONFIG.CLEARING_ID;
+      const pass = L.isClearingId(target.account_id);
       const rule = L.suggestRule(rules, ln.merchant);
       puts.Postings.push(out ? mk(target.account_id, 1) : mk(accountId, 1), out ? mk(accountId, -1) : mk(target.account_id, -1));
       puts.Transactions.push({

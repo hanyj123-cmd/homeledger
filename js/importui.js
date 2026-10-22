@@ -287,7 +287,7 @@ export function render(api) {
     grp('Other expenses (기타 지출)', exp.filter((a) => Lg.GROUP_ORDER.indexOf(a.report_group || '확인 필요') < 0));
     grp('Income (수입)', acc.filter((a) => a.type === 'INCOME'));
     grp('Transfer to account (계좌 이체 · 카드 대금)', acc.filter((a) => Lg.isMoneyAccount(a) && String(a.account_id) !== String(S.accountId)));
-    grp('Passthrough (전달 자금)', acc.filter((a) => String(a.account_id) === CONFIG.CLEARING_ID));
+    grp('Passthrough (전달 자금)', acc.filter((a) => Lg.isClearingId(a.account_id)));
     return sel;
   }
 

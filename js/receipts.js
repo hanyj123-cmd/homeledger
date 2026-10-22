@@ -430,19 +430,24 @@ export function makeReceiptRecords(draft, ctx) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.date || '')) return { error: '날짜를 입력하세요.' };
   if (!L.isMoneyAccount(A(draft.fromId))) return { error: '결제 계좌를 선택하세요.' };
   if (Math.abs(al.diff) >= 0.005) return { error: '항목 합계 + 세금 + 팁이 영수증 총액과 ' + L.fmtNumber(Math.abs(al.diff), ccy) + ' 다릅니다. 항목을 고치거나 "조정 항목 추가"를 누르세요.' };
-  const noCat = al.lines.find((ln) => { const c = A(ln.item.category_id); return !c || !(c.type === 'EXPENSE'); });
+  // 전달 자금(교회/개인)이면 모든 항목이 그 전달 자금 계정으로 들어가서 카테고리를 고르지 않습니다. 환불이면 분개 방향만 반대.
+  const pass = draft.pass === 'CHURCH' || draft.pass === 'PERSONAL' ? draft.pass : '';
+  const rs = draft.refund ? -1 : 1;
+  const catOf = (it) => (pass ? L.clearingIdFor(pass) : String(it.category_id));
+  if (pass && !A(L.clearingIdFor(pass))) return { error: (pass === 'CHURCH' ? '교회 전달 자금(2901)' : '전달 자금(2900)') + ' 계정이 아직 없습니다. 동기화한 뒤 다시 시도하세요.' };
+  const noCat = pass ? null : al.lines.find((ln) => { const c = A(ln.item.category_id); return !c || !(c.type === 'EXPENSE'); });
   if (noCat) return { error: '"' + (noCat.item.name || '항목 ' + (noCat.idx + 1)) + '" 의 카테고리를 선택하세요.' };
 
   // 카테고리별 합계 (팁은 가장 큰 항목의 카테고리, 또는 직접 고른 카테고리)
-  const bigCat = al.lines.slice().sort((x, y) => Math.abs(y.amount) - Math.abs(x.amount))[0].item.category_id;
-  const tipCat = al.tip > 0 ? (A(draft.tipCategory) && A(draft.tipCategory).type === 'EXPENSE' ? draft.tipCategory : bigCat) : '';
+  const bigCat = catOf(al.lines.slice().sort((x, y) => Math.abs(y.amount) - Math.abs(x.amount))[0].item);
+  const tipCat = al.tip > 0 ? (pass ? bigCat : A(draft.tipCategory) && A(draft.tipCategory).type === 'EXPENSE' ? draft.tipCategory : bigCat) : '';
   // 항목마다 소유자를 고를 수 있어서, 같은 카테고리라도 소유자가 다르면 분개를 따로 만듭니다. (항목에서 안 고르면 영수증의 기본 소유자)
   const txnOwner = draft.owner || 'Joint';
   const effOwner = (it) => String(it.owner || txnOwner);
   const groups = new Map();      // key("카테고리|소유자") → 금액
   const gInfo = new Map();       // key → { cat, owner }
   const addG = (cat, owner, v) => { const k = String(cat) + '|' + owner; gInfo.set(k, { cat: String(cat), owner }); groups.set(k, L.round((groups.get(k) || 0) + v, al.dec)); };
-  al.lines.forEach((ln) => addG(ln.item.category_id, effOwner(ln.item), ln.gross));
+  al.lines.forEach((ln) => addG(catOf(ln.item), effOwner(ln.item), ln.gross));
   if (al.tip > 0) addG(tipCat, txnOwner, al.tip);
   const cats = Array.from(groups.keys());
 
@@ -470,7 +475,7 @@ export function makeReceiptRecords(draft, ctx) {
   const pairP = pairExisting(oldPs, (p) => String(p.account_id), accIds);
   const mkP = (accId, i, orig, cad, owner) => ({
     posting_id: pairP.assigned[i] ? pairP.assigned[i].posting_id : L.newId('p'), txn_id: txnId, line_id: '', account_id: String(accId),
-    amount_cad: cad, amount_orig: orig, currency: ccy, fx_rate: rate, memo: '', owner: owner && owner !== txnOwner ? owner : '', updated_at: now, deleted: false
+    amount_cad: L.round(cad * rs, 2), amount_orig: L.round(orig * rs, al.dec), currency: ccy, fx_rate: rate, memo: '', owner: owner && owner !== txnOwner ? owner : '', updated_at: now, deleted: false
   });
   const postings = cats.map((c, i) => mkP(gInfo.get(c).cat, i, groups.get(c), cadOf.get(c), gInfo.get(c).owner));
   postings.push(mkP(draft.fromId, cats.length, -al.total, -cadTotal));
@@ -481,7 +486,7 @@ export function makeReceiptRecords(draft, ctx) {
   // 항목 행 (팁은 별도 행)
   const rows = al.lines.map((ln) => ({
     name: ln.item.name || '(item)', name_raw: ln.item.name_raw || ln.item.name || '', qty: ln.item.qty, unit_price: ln.item.unit_price,
-    amount: ln.amount, is_discount: !!ln.item.is_discount, tax_code: ln.item.tax_code || '', tax: ln.tax, cat: String(ln.item.category_id), owner: String(ln.item.owner || '')
+    amount: ln.amount, is_discount: !!ln.item.is_discount, tax_code: ln.item.tax_code || '', tax: ln.tax, cat: catOf(ln.item), owner: String(ln.item.owner || '')
   }));
   if (al.tip > 0) rows.push({ name: TIP_LABEL, name_raw: TIP_LABEL, qty: null, unit_price: null, amount: al.tip, is_discount: false, tax_code: 'NONE', tax: 0, cat: String(tipCat), owner: '' });
   const oldLines = ex ? (ex.lineItems || []).filter((l) => !L.truthy(l.deleted)).sort((a, b) => L.num(a.line_no) - L.num(b.line_no)) : [];
@@ -512,9 +517,9 @@ export function makeReceiptRecords(draft, ctx) {
     txn_id: txnId, date: draft.date, merchant: (draft.merchant || '').trim(), memo: base.memo || '', currency: ccy,
     subtotal_orig: al.subtotal, tax_orig: tax, tip_orig: al.tip || '', total_orig: al.total, fx_rate: rate, fx_source: fxSource, fx_status: fxStatus,
     total_cad: cadTotal, source: base.source || 'RECEIPT', status: base.status || 'PENDING_MATCH', owner: draft.owner || 'Joint',
-    is_passthrough: false, receipt_id: receiptId, created_at: base.created_at || now, updated_at: now, deleted: false
+    is_passthrough: !!pass, receipt_id: receiptId, created_at: base.created_at || now, updated_at: now, deleted: false
   });
-  const rule = draft.merchant && new Set(cats.map((k) => gInfo.get(k).cat)).size === 1 ? L.learnRule(ctx.rules || [], draft.merchant, gInfo.get(cats[0]).cat, now) : null;
+  const rule = draft.merchant && !pass && new Set(cats.map((k) => gInfo.get(k).cat)).size === 1 ? L.learnRule(ctx.rules || [], draft.merchant, gInfo.get(cats[0]).cat, now) : null;
   return { txn, postings, lineItems, receipt, rule, alloc: al };
 }
 
@@ -528,7 +533,7 @@ export function findStatementMatches(items, info) {
     const t = it.txn;
     if (L.truthy(t.deleted) || t.receipt_id || !t.statement_line_id) return;
     const post = (it.ps || []).find((p) => !L.truthy(p.deleted) && String(p.account_id) === String(info.fromId));
-    if (!post || Math.abs(Math.abs(L.num(post.amount_cad)) - info.totalCad) > 0.005 || L.num(post.amount_cad) >= 0) return;
+    if (!post || Math.abs(Math.abs(L.num(post.amount_cad)) - info.totalCad) > 0.005 || (info.refund ? L.num(post.amount_cad) <= 0 : L.num(post.amount_cad) >= 0)) return;
     const ds = [t.date, t.posted_date].filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '')).map((x) => Math.abs(dn(x) - dn(info.date)));
     const diff = ds.length ? Math.min.apply(null, ds) : 99;
     if (diff > MATCH_WINDOW_DAYS) return;
@@ -605,6 +610,8 @@ export function draftFromExisting(txn, ctx) {
     tipCategory: tipLine ? String(tipLine.category_account_id || '') : '',
     cadText: ccy !== 'CAD' && String(txn.fx_status).toUpperCase() !== 'PROVISIONAL' ? String(L.num(txn.total_cad)) : '',
     rateText: ccy !== 'CAD' && String(txn.fx_status).toUpperCase() === 'PROVISIONAL' ? String(L.num(txn.fx_rate)) : '',
-    fromId: from ? String(from.account_id) : '', owner: txn.owner || 'Joint', items, warnings: [], notes: '', thumb: '', meta: m, existing: true
+    fromId: from ? String(from.account_id) : '', owner: txn.owner || 'Joint', items, warnings: [], notes: '', thumb: '', meta: m, existing: true,
+    refund: !!from && L.num(from.amount_cad) > 0,
+    pass: (() => { const c = (ctx.postings || []).find((p) => !L.truthy(p.deleted) && L.isClearingId(p.account_id)); return c ? L.passKindOf(c.account_id) : ''; })()
   };
 }

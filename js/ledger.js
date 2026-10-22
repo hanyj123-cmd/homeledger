@@ -163,6 +163,11 @@ export function accLabel(a) {
 /** "분류 필요"인 거래인가: 미분류(9999) 줄이 남아 있을 때만 (예전에 남은 REVIEW 표시만으로는 아님) */
 export const needsCategory = (it) => !!it && (String(it.desc && it.desc.categoryId) === '9999' || (it.ps || []).some((p) => !truthy(p.deleted) && String(p.account_id) === '9999'));
 
+/** 전달 자금(clearing) 계정인가: 개인(2900) · 교회(2901) */
+export const isClearingId = (id) => String(id) === CONFIG.CLEARING_ID || String(id) === CONFIG.CLEARING_CHURCH_ID;
+export const passKindOf = (id) => (String(id) === CONFIG.CLEARING_CHURCH_ID ? 'CHURCH' : 'PERSONAL');
+export const clearingIdFor = (kind) => (kind === 'CHURCH' ? CONFIG.CLEARING_CHURCH_ID : CONFIG.CLEARING_ID);
+export const PASS_LABEL = { CHURCH: 'Church (교회)', PERSONAL: 'Personal (개인)' };
 export const isMoneyAccount = (a) => !!a && (a.type === 'ASSET' || a.type === 'LIABILITY') && a.subtype !== 'CLEARING';
 
 export function makeAccMap(accounts) {
@@ -198,7 +203,7 @@ export function describeTxn(txn, postings, accMap) {
   const isId = (p, id) => String(p.account_id) === String(id);
   const typeOf = (p) => { const a = get(p.account_id); return a ? a.type : ''; };
   const opening = postings.find((p) => isId(p, CONFIG.OPENING_ID));
-  const clearing = postings.find((p) => isId(p, CONFIG.CLEARING_ID));
+  const clearing = postings.find((p) => isClearingId(p.account_id));
   const exps = postings.filter((p) => typeOf(p) === 'EXPENSE');
   const incs = postings.filter((p) => typeOf(p) === 'INCOME');
   const exp = exps[0];
@@ -213,10 +218,11 @@ export function describeTxn(txn, postings, accMap) {
     out.categoryName = 'Opening balance (기초잔액)';
     if (other) { out.accountId = String(other.account_id); out.accountName = nameOf(other.account_id); }
   } else if (clearing) {
-    const other = postings.find((p) => !isId(p, CONFIG.CLEARING_ID));
+    const other = postings.find((p) => !isClearingId(p.account_id));
     out.kind = 'PASSTHROUGH';
-    out.categoryId = CONFIG.CLEARING_ID;
-    out.categoryName = 'Passthrough (전달 자금)';
+    out.categoryId = String(clearing.account_id);
+    out.passKind = passKindOf(clearing.account_id);
+    out.categoryName = 'Passthrough · ' + PASS_LABEL[out.passKind] + ' (전달 자금)';
     if (other) {
       out.accountId = String(other.account_id);
       out.accountName = nameOf(other.account_id);
@@ -262,7 +268,7 @@ export function newForm(defaults) {
   return Object.assign({
     kind: 'EXPENSE', date: todayStr(), amountText: '', currency: 'CAD', cadText: '', rateText: '',
     fromId: '', toId: '', categoryId: '', accountId: '', merchant: '', memo: '', owner: 'Joint',
-    tripTag: '', passthrough: false, refund: false, categoryTouched: false, ownerTouched: false,
+    tripTag: '', passthrough: false, passKind: 'PERSONAL', refund: false, categoryTouched: false, ownerTouched: false,
     split: false, lines: []
   }, defaults || {});
 }
@@ -281,7 +287,7 @@ export function formFromTxn(txn, postings, accMap) {
   });
   if (d.kind === 'PASSTHROUGH') {
     f.kind = d.flow === 'out' ? 'EXPENSE' : 'INCOME';
-    f.passthrough = true;
+    f.passthrough = true; f.passKind = d.passKind || 'PERSONAL';
     if (f.kind === 'EXPENSE') f.fromId = d.accountId; else f.toId = d.accountId;
   } else if (d.kind === 'EXPENSE') {
     f.kind = 'EXPENSE'; f.fromId = d.accountId; f.categoryId = d.categoryId; f.refund = d.flow === 'in';
@@ -441,7 +447,7 @@ export function makeRecords(form, ctx) {
   const A = (id) => accMap.get(String(id));
   const passthrough = !!form.passthrough && (kind === 'EXPENSE' || kind === 'INCOME');
   const split = !!form.split && !passthrough && (kind === 'EXPENSE' || kind === 'INCOME') && (form.lines || []).length > 0;
-  let categoryId = passthrough ? CONFIG.CLEARING_ID : form.categoryId;
+  let categoryId = passthrough ? clearingIdFor(form.passKind) : form.categoryId;
   let lines;
   let splitLines = null; // [{ categoryId, orig, cad, owner, memo, postingId }]
 
@@ -472,12 +478,12 @@ export function makeRecords(form, ctx) {
   } else if (kind === 'EXPENSE') {
     if (!isMoneyAccount(A(form.fromId))) return { error: '결제 계좌를 선택하세요.' };
     const c = A(categoryId);
-    if (!c || !(c.type === 'EXPENSE' || String(c.account_id) === CONFIG.CLEARING_ID)) return { error: '카테고리를 선택하세요.' };
+    if (!c || !(c.type === 'EXPENSE' || isClearingId(c.account_id))) return { error: '카테고리를 선택하세요.' };
     lines = form.refund ? [[form.fromId, 1], [categoryId, -1]] : [[categoryId, 1], [form.fromId, -1]];
   } else if (kind === 'INCOME') {
     if (!isMoneyAccount(A(form.toId))) return { error: '입금 계좌를 선택하세요.' };
     const c = A(categoryId);
-    if (!c || !(c.type === 'INCOME' || String(c.account_id) === CONFIG.CLEARING_ID)) return { error: '수입 항목을 선택하세요.' };
+    if (!c || !(c.type === 'INCOME' || isClearingId(c.account_id))) return { error: '수입 항목을 선택하세요.' };
     lines = [[form.toId, 1], [categoryId, -1]];
   } else if (kind === 'TRANSFER') {
     if (!isMoneyAccount(A(form.fromId)) || !isMoneyAccount(A(form.toId))) return { error: '보내는 계좌와 받는 계좌를 선택하세요.' };

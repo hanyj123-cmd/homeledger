@@ -372,7 +372,8 @@ export function openForm(api, txnId, defaults) {
       let content;
       let action = null;
       if (f.passthrough) {
-        content = [h('div', { class: 'txf-note wide' }, icon('info', 16), 'Passthrough money is kept out of income & spending (전달 자금은 손익에서 빠집니다)')];
+        content = [h('div', { class: 'txf-note wide' }, icon('info', 16), 'Passthrough money is kept out of income & spending (전달 자금은 손익에서 빠집니다). '
+          + (f.passKind === 'CHURCH' ? 'Church money — tracked under the church (교회 돈: 교회 전달 자금으로 관리).' : 'Personal money — tracked by the owner you pick below (개인 돈: 아래 소유자로 관리).'))];
       } else if (splitOn()) {
         action = h('button', { type: 'button', class: 'txf-link', id: 'f-split', 'aria-pressed': 'true', onclick: unsplit }, icon('close', 16), 'Undo split (나누기 취소)');
         content = [splitEditor(catType)];
@@ -409,6 +410,13 @@ export function openForm(api, txnId, defaults) {
         if (f.passthrough) { f.split = false; f.lines = []; }
         draw();
       }, 'e.g. paying for someone who pays you back (대신 내고 돌려받는 돈)'));
+      if (f.passthrough) {
+        ownKids.push(h('div', { class: 'field txf-f wide', id: 'f-passkind-row' }, lbl('Whose money? (누구 돈인가)', 'people'),
+          h('div', { class: 'txf-own', role: 'radiogroup', 'aria-label': 'Passthrough type (전달 자금 종류)' }, ['PERSONAL', 'CHURCH'].map((k) => h('button', {
+            type: 'button', role: 'radio', class: f.passKind === k ? 'on' : '', 'aria-checked': f.passKind === k ? 'true' : 'false', 'data-passkind': k,
+            onclick: () => { f.passKind = k; draw(); }
+          }, L.PASS_LABEL[k])))));
+      }
     }
     parts.push(group('Owner & options (소유자 · 옵션)', ownKids));
 

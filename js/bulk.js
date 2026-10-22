@@ -81,7 +81,7 @@ export function planBulk(items, ids, patch, accMap, now, opts) {
 
     if (special) {
       const desc = it.desc || L.describeTxn(it.txn, ps, accMap);
-      const clearing = ps.filter((q) => String(q.account_id) === CONFIG.CLEARING_ID);
+      const clearing = ps.filter((q) => L.isClearingId(q.account_id));
       const exps = ps.filter((q) => typeOf(q) === 'EXPENSE');
       const incs = ps.filter((q) => typeOf(q) === 'INCOME');
       let target = null;
@@ -112,7 +112,7 @@ export function planBulk(items, ids, patch, accMap, now, opts) {
 
     if (cat) {
       const desc = it.desc || L.describeTxn(it.txn, ps, accMap);
-      const clearing = ps.filter((q) => String(q.account_id) === CONFIG.CLEARING_ID);
+      const clearing = ps.filter((q) => L.isClearingId(q.account_id));
       const exps = ps.filter((q) => typeOf(q) === 'EXPENSE');
       const incs = ps.filter((q) => typeOf(q) === 'INCOME');
       let target = null;
@@ -143,7 +143,7 @@ export function planBulk(items, ids, patch, accMap, now, opts) {
           dirty = true;
           if (t.merchant && String(cat.account_id) !== '9999') {
             const k = L.normMerchant(t.merchant);
-            if (k && !remembered.has(k)) { remembered.add(k); out.remember.push({ merchant: t.merchant, accountId: String(cat.account_id), previousAccountId: prev === CONFIG.CLEARING_ID ? '' : prev }); }
+            if (k && !remembered.has(k)) { remembered.add(k); out.remember.push({ merchant: t.merchant, accountId: String(cat.account_id), previousAccountId: L.isClearingId(prev) ? '' : prev }); }
           }
         }
         if (L.truthy(t.is_passthrough) || desc.kind === 'PASSTHROUGH') { if (t.is_passthrough !== false) { t.is_passthrough = false; dirty = true; } }

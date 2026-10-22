@@ -129,7 +129,7 @@ export function ruleList(rules, accMap, q) {
   return list.sort((a, b) => (L.num(b.hit_count) - L.num(a.hit_count)) || String(a.pattern).localeCompare(String(b.pattern)));
 }
 
-export const isPassthroughRule = (r) => L.truthy(r.is_passthrough) || String(r.account_id) === CONFIG.CLEARING_ID;
+export const isPassthroughRule = (r) => L.truthy(r.is_passthrough) || L.isClearingId(r.account_id);
 
 // ───────── 화면 ─────────
 
@@ -154,8 +154,8 @@ export function catSelect(api, sel, attrs) {
   keys.forEach((g) => opts.push(h('optgroup', { label: L.GROUP_LABELS[g] || g }, groups.get(g).map(mk))));
   const inc = accounts.filter((a) => a.type === 'INCOME');
   if (inc.length) opts.push(h('optgroup', { label: 'Income (수입)' }, inc.map(mk)));
-  const clearing = accounts.find((a) => String(a.account_id) === CONFIG.CLEARING_ID);
-  if (clearing) opts.push(h('optgroup', { label: 'Passthrough (전달 자금)' }, [mk(clearing)]));
+  const clearing = accounts.filter((a) => L.isClearingId(a.account_id));
+  if (clearing.length) opts.push(h('optgroup', { label: 'Passthrough (전달 자금)' }, clearing.map(mk)));
   if (sel && !known.has(String(sel))) {
     const a = (api.accMap && api.accMap.get(String(sel))) || null;
     opts.splice(1, 0, h('option', { value: String(sel), selected: true }, a ? L.accLabel(a) : '(missing 없는 계정 ' + sel + ')'));

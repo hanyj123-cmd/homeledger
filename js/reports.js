@@ -177,6 +177,28 @@ export function ownerTotals(items, accMap, ms) {
     .filter((e) => e.income || e.expense).sort((a, b) => b.expense - a.expense);
 }
 
+/**
+ * 전달 자금 잔액 (전체 기간): 교회는 한 줄, 개인은 소유자별.
+ * 양수 = 내가 대신 내서 받을 돈, 음수 = 받아 두고 아직 안 쓴(돌려줄) 돈.
+ * 반환: [{ kind: 'CHURCH'|'PERSONAL', owner, net }]
+ */
+export function passthroughBalances(items, accMap) {
+  const by = new Map();
+  items.forEach((it) => {
+    it.ps.forEach((p) => {
+      if (L.truthy(p.deleted) || !L.isClearingId(p.account_id) || !accMap.get(String(p.account_id))) return;
+      const kind = L.passKindOf(p.account_id);
+      const owner = kind === 'CHURCH' ? '' : (String(p.owner || it.txn.owner || 'Joint').trim() || 'Joint');
+      const k = kind + '|' + owner;
+      const e = by.get(k) || { kind, owner, net: 0 };
+      e.net += L.num(p.amount_cad);
+      by.set(k, e);
+    });
+  });
+  return Array.from(by.values()).map((e) => ({ kind: e.kind, owner: e.owner, net: L.round(e.net, 2) })).filter((e) => e.net !== 0 || true)
+    .sort((a, b) => (a.kind === b.kind ? Math.abs(b.net) - Math.abs(a.net) : a.kind === 'CHURCH' ? -1 : 1));
+}
+
 export function peopleReport(items, accMap, months, prevMonths) {
   const cur = ownerTotals(items, accMap, months);
   const prev = new Map(ownerTotals(items, accMap, prevMonths || []).map((e) => [e.owner, e]));
@@ -679,7 +701,19 @@ export function render(api) {
   }
 
   // ───── 사람별 ─────
-  function drawWHO() {
+  function drawWHO() { drawWHOMain(); passCard(); }
+  // 전달 자금 잔액: 교회 / 개인(소유자별)
+  function passCard() {
+    const rows = passthroughBalances(api.items, api.accMap);
+    if (!rows.length) return;
+    const money = (v) => (v < 0 ? '−' : '') + fmt(Math.abs(v));
+    body.append(h('div', { class: 'card', id: 'rep-pass' },
+      h('div', { class: 'rc-line strong' }, h('span', null, 'Passthrough balances (전달 자금 잔액)'), h('span', null, '')),
+      rows.map((r) => h('div', { class: 'rc-line', 'data-pass': r.kind }, h('span', null, r.kind === 'CHURCH' ? 'Church (교회)' : 'Personal · ' + L.ownerLabel(r.owner) + ' (개인)'),
+        h('span', { class: r.net < 0 ? 'out' : '' }, money(r.net) + (r.net > 0 ? ' · to receive (받을 돈)' : r.net < 0 ? ' · to return (돌려줄 돈)' : '')))),
+      h('div', { class: 'hint' }, 'All time. Not part of income or spending (전체 기간 · 수입·지출에는 포함되지 않아요).')));
+  }
+  function drawWHOMain() {
     const plab = scope === 'Y' ? 'Same period last year (작년 같은 기간)' : 'Last month (지난달)';
     if (!who.rows.length) {
       body.append(h('div', { class: 'card center muted', id: 'who-empty' }, 'No income or spending in this period (이 기간에 수입·지출이 없습니다).'));
