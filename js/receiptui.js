@@ -329,10 +329,39 @@ function openReview(api, draft, close, show, shell) {
     return shell(editing ? 'Edit receipt (영수증 수정)' : 'Check receipt (영수증 확인)', rows);
   }
 
-  async function onSave() {
+  // 카드명세서로 이미 들어온 같은 결제가 있으면 "같은 건가요?" 물어보고, 맞다면 그 거래에 영수증을 붙입니다.
+  function askLink(cands) {
+    const rowOf = (c, i) => {
+      const t = c.item.txn;
+      return h('button', { type: 'button', class: 'btn' + (i === 0 ? '' : ' secondary'), id: 'rc-link-' + i, onclick: () => save(c.item) },
+        'Yes — same purchase (맞아요): ' + L.dayLabel(t.date) + ' · ' + (t.merchant || t.merchant_raw || '') + ' · ' + fmt(Math.abs(L.num(t.total_cad))));
+    };
+    show(shell('Already on your statement? (명세서에 이미 있나요?)',
+      h('div', { class: 'card warn-card', id: 'rc-link-ask' }, 'A card statement already has a charge with this amount around this date. Merge this receipt into it so it is counted once? (카드명세서에 같은 금액·비슷한 날짜의 거래가 이미 있어요. 하나로 합칠까요?)'),
+      h('div', { class: 'btnrow', style: 'flex-direction:column;align-items:stretch' },
+        cands.slice(0, 3).map(rowOf),
+        h('button', { type: 'button', class: 'btn secondary', id: 'rc-link-no', onclick: () => save(null) }, 'No — save as a separate transaction (아니요, 따로 저장)'),
+        h('button', { type: 'button', class: 'btn secondary', id: 'rc-link-back', onclick: draw }, 'Back to receipt (영수증으로 돌아가기)'))));
+  }
+
+  function onSave() {
     if (saving) return;
     const pre = R.makeReceiptRecords(draft, { accMap: d.accMap, taxCodes, rules: data.rules, existing: draft._existing || null, now: L.nowIso() });
     if (pre.error) { errEl.textContent = pre.error; return; }
+    if (!editing) {
+      const cands = R.findStatementMatches(d.items, { fromId: draft.fromId, totalCad: Math.abs(L.num(pre.txn.total_cad)), date: draft.date, merchant: draft.merchant });
+      if (cands.length) { askLink(cands); return; }
+    }
+    return save(null);
+  }
+
+  async function save(link) {
+    if (saving) return;
+    if (link) draft._existing = null;
+    const exOf = () => draft._existing || (link ? { txn: link.txn, ps: data.postings.filter((p) => String(p.txn_id) === String(link.txn.txn_id)), lineItems: [], receipt: null } : null);
+    const mk = () => R.makeReceiptRecords(draft, { accMap: d.accMap, taxCodes, rules: data.rules, existing: exOf(), attach: !!link, now: L.nowIso() });
+    const pre = mk();
+    if (pre.error) { if (link) draw(); if (errEl) errEl.textContent = pre.error; return; }
     saving = true;
     const btn = $('rc-save');
     if (btn) btn.disabled = true;
@@ -343,7 +372,7 @@ function openReview(api, draft, close, show, shell) {
         await Promise.race([draft.meta.stored, new Promise((r) => setTimeout(r, 20000))]);
         errEl.textContent = '';
       }
-      const res = R.makeReceiptRecords(draft, { accMap: d.accMap, taxCodes, rules: data.rules, existing: draft._existing || null, now: L.nowIso() });
+      const res = mk();
       if (res.error) { saving = false; if (btn) btn.disabled = false; errEl.textContent = res.error; return; }
       const puts = { Transactions: [res.txn], Postings: res.postings, LineItems: res.lineItems };
       const order = ['Receipts', 'LineItems', 'Postings', 'Transactions'];
@@ -361,7 +390,7 @@ function openReview(api, draft, close, show, shell) {
       if (draft.fromId) { try { localStorage.setItem('hl_last_from', draft.fromId); } catch (e) { /* ignore */ } }
       if (res.txn.date && L.monthOf(res.txn.date) !== api.state.month && !api.state.query) api.state.month = L.monthOf(res.txn.date);
       close();
-      api.toast(auth.getToken() ? 'Saved (저장됨)' : 'Saved offline — will upload after sign-in (오프라인 저장, 로그인 후 전송)');
+      api.toast(link && auth.getToken() ? 'Merged into the statement charge (명세서 거래에 합쳤어요)' : auth.getToken() ? 'Saved (저장됨)' : 'Saved offline — will upload after sign-in (오프라인 저장, 로그인 후 전송)');
       await api.reload();
       api.renderBody(true);
       const cur = res.rule ? L.suggestRule(data.rules, res.txn.merchant) : null;

@@ -437,7 +437,7 @@ export function assignKeys(accountId, lines, existing) {
 
 const dayNum = (iso) => Math.round(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000);
 
-function nameSim(a, b) {
+export function nameSim(a, b) {
   const x = L.normMerchant(a), y = L.normMerchant(b);
   if (!x || !y) return 0.3;
   if (x === y) return 1;

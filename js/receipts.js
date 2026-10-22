@@ -6,6 +6,7 @@ import { getToken } from './auth.js';
 import * as prefs from './prefs.js';
 import * as scanimg from './scanimg.js';
 import * as models from './models.js';
+import { nameSim, MATCH_WINDOW_DAYS } from './importer.js';
 
 export const DEFAULT_RATES = { HST_ON: 0.13, GST: 0.05, HST_ATL: 0.15, GST_QST: 0.14975, ZERO: 0, EXEMPT: 0, NONE: 0 };
 export const TAX_OPTIONS = ['HST_ON', 'GST', 'HST_ATL', 'GST_QST', 'ZERO', 'EXEMPT', 'NONE'];
@@ -411,7 +412,8 @@ function pairExisting(oldList, keyOf, newKeys) {
   return { assigned, leftovers: oldList.filter((o, x) => !used.has(x)) };
 }
 
-// ctx = { accMap, taxCodes, now, existing: {txn, ps, lineItems, receipt} | null }
+// ctx = { accMap, taxCodes, now, existing: {txn, ps, lineItems, receipt} | null, attach }
+// attach=true: existing 은 이미 들어와 있는 명세서 거래 — 영수증 항목·사진을 그 거래에 붙입니다 (새 거래를 만들지 않음).
 export function makeReceiptRecords(draft, ctx) {
   const now = ctx.now || L.nowIso();
   const accMap = ctx.accMap;
@@ -485,7 +487,7 @@ export function makeReceiptRecords(draft, ctx) {
   // 영수증 원본 기록 (새 영수증일 때만)
   let receipt = null;
   const receiptId = ex && ex.txn.receipt_id ? ex.txn.receipt_id : (draft.meta ? L.newId('rc') : '');
-  if (!ex && draft.meta) {
+  if ((!ex || ctx.attach) && draft.meta) {
     const m = draft.meta;
     receipt = {
       receipt_id: receiptId, txn_id: txnId, drive_file_id: (m.drive && m.drive.fileId) || '', file_name: (m.drive && m.drive.fileName) || m.fileName || '',
@@ -504,6 +506,26 @@ export function makeReceiptRecords(draft, ctx) {
   });
   const rule = draft.merchant && cats.length === 1 ? L.learnRule(ctx.rules || [], draft.merchant, cats[0], now) : null;
   return { txn, postings, lineItems, receipt, rule, alloc: al };
+}
+
+// 카드명세서로 먼저 들어온 거래 중, 이 영수증과 같은 결제로 보이는 것 찾기.
+// items = [{txn, ps}], info = { fromId, totalCad, date, merchant } — 같은 결제 계좌 · 같은 금액 · 날짜 ±5일 · 아직 영수증이 없는 거래만.
+export function findStatementMatches(items, info) {
+  const out = [];
+  const dn = (iso) => Math.round(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000);
+  if (!info || !info.fromId || !/^\d{4}-\d{2}-\d{2}$/.test(info.date || '')) return out;
+  (items || []).forEach((it) => {
+    const t = it.txn;
+    if (L.truthy(t.deleted) || t.receipt_id || !t.statement_line_id) return;
+    const post = (it.ps || []).find((p) => !L.truthy(p.deleted) && String(p.account_id) === String(info.fromId));
+    if (!post || Math.abs(Math.abs(L.num(post.amount_cad)) - info.totalCad) > 0.005 || L.num(post.amount_cad) >= 0) return;
+    const ds = [t.date, t.posted_date].filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '')).map((x) => Math.abs(dn(x) - dn(info.date)));
+    const diff = ds.length ? Math.min.apply(null, ds) : 99;
+    if (diff > MATCH_WINDOW_DAYS) return;
+    const name = nameSim(info.merchant || '', t.merchant || t.merchant_raw || '');
+    out.push({ item: it, diff, name, score: L.round(0.6 * name + 0.4 * (1 - diff / (MATCH_WINDOW_DAYS + 1)), 3) });
+  });
+  return out.sort((a, b) => b.score - a.score);
 }
 
 // 이미 저장한 영수증 사진인지 (같은 사진 = 같은 sha256)
