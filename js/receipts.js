@@ -533,6 +533,45 @@ export function findStatementMatches(items, info) {
   return out.sort((a, b) => b.score - a.score);
 }
 
+// ───────── 이미 따로 들어간 "영수증 거래" + "명세서 거래" 합치기 ─────────
+
+const isoOk = (x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '');
+const dnum = (iso) => Math.round(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000);
+
+/** 같은 결제로 보이는 짝: 영수증 거래(receipt_id 있음, 명세서 연결 없음) ↔ 명세서 거래(명세서 연결 있음, 영수증 없음). 같은 계좌 · 같은 금액 · 날짜 ±5일 */
+export function findTwin(items, item, accMap) {
+  const t = item.txn;
+  const isRec = !!t.receipt_id && !t.statement_line_id;
+  const isStm = !!t.statement_line_id && !t.receipt_id;
+  if (!isRec && !isStm) return [];
+  const moneyPs = (it) => (it.ps || []).filter((p) => !L.truthy(p.deleted) && L.isMoneyAccount(accMap.get(String(p.account_id))));
+  const mine = moneyPs(item);
+  const out = [];
+  (items || []).forEach((o) => {
+    const u = o.txn;
+    if (u === t || String(u.txn_id) === String(t.txn_id) || L.truthy(u.deleted)) return;
+    const ok = isRec ? (u.statement_line_id && !u.receipt_id) : (u.receipt_id && !u.statement_line_id);
+    if (!ok) return;
+    const hit = moneyPs(o).some((q) => mine.some((p) => String(p.account_id) === String(q.account_id) && Math.abs(L.num(p.amount_cad) - L.num(q.amount_cad)) < 0.005 && L.num(p.amount_cad) !== 0));
+    if (!hit || !isoOk(t.date) || !isoOk(u.date)) return;
+    const diff = Math.abs(dnum(t.date) - dnum(u.date));
+    if (diff <= MATCH_WINDOW_DAYS) out.push({ item: o, diff });
+  });
+  return out.sort((a, b) => a.diff - b.diff);
+}
+
+/** 영수증 거래를 남기고 명세서 거래는 지웁니다 (영수증 항목·분류는 그대로, 명세서 연결·게시일을 영수증 거래로 옮김).
+ *  반환: saveBatch 에 넣을 puts */
+export function mergeTwins(recItem, stmItem, stmtLines, now) {
+  const rec = recItem.txn, stm = stmItem.txn;
+  const kept = Object.assign({}, rec, { statement_line_id: stm.statement_line_id, posted_date: stm.posted_date || stm.date, status: 'MATCHED', updated_at: now });
+  const gone = Object.assign({}, stm, { deleted: true, updated_at: now });
+  const del = (p) => Object.assign({}, p, { deleted: true, updated_at: now });
+  const sls = (stmtLines || []).filter((x) => !L.truthy(x.deleted) && String(x.matched_txn_id) === String(stm.txn_id))
+    .map((x) => Object.assign({}, x, { matched_txn_id: String(rec.txn_id), updated_at: now }));
+  return { Transactions: [kept, gone], Postings: (stmItem.ps || []).filter((p) => !L.truthy(p.deleted)).map(del), StatementLines: sls };
+}
+
 // 이미 저장한 영수증 사진인지 (같은 사진 = 같은 sha256)
 export function findDuplicate(receipts, txns, sha) {
   if (!sha) return null;

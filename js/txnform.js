@@ -15,6 +15,7 @@ import * as fx from './fx.js';
 import { icon } from './icons.js';
 import { openRemember } from './rememberui.js';
 import { lang } from './prefs.js';
+import * as R from './receipts.js';
 
 // 소유자 버튼 글자: 둘 다 보기면 한글(굵게) + 영어(작게), 아니면 고른 언어 하나
 const ownerKids = (o) => (lang() === 'both' && L.OWNER_KO[o] ? [(() => { const b = document.createElement('b'); b.textContent = L.OWNER_KO[o]; return b; })(), (() => { const s = document.createElement('small'); s.textContent = o; return s; })()] : L.ownerLabel(o));
@@ -430,6 +431,24 @@ export function openForm(api, txnId, defaults) {
         icon('camera', 18), h('span', null, 'Attach receipt photo (영수증 사진 붙이기)'), icon('plus', 16)));
     }
     parts.push(group('Notes (메모)', noteKids, { cls: 'txf-notes' }));
+
+    // 영수증으로 넣은 거래와 카드명세서로 들어온 거래가 따로 있으면(같은 금액 · 비슷한 날짜) 하나로 합치기
+    const twins = existing ? R.findTwin(d.items, existing, d.accMap) : [];
+    if (twins.length) {
+      const tw = twins[0].item;
+      const iRec = !!existing.txn.receipt_id;
+      const recIt = iRec ? existing : tw, stmIt = iRec ? tw : existing;
+      parts.push(h('div', { class: 'card warn-card', id: 'f-twin' },
+        h('div', null, (iRec ? 'A statement charge looks like this same purchase' : 'A receipt looks like this same purchase') + ': ' + L.dayLabel(tw.txn.date) + ' · ' + (tw.txn.merchant || tw.txn.merchant_raw || '') + ' · ' + fmt(Math.abs(L.num(tw.txn.total_cad)))
+          + ' (같은 결제로 보이는 ' + (iRec ? '명세서' : '영수증') + ' 거래가 따로 있어요 — 합치면 한 번만 계산돼요)'),
+        h('button', { type: 'button', class: 'btn', id: 'f-twin-merge', onclick: async () => {
+          if (!window.confirm('Merge into one transaction — keeps the receipt items, removes the duplicate statement entry. (하나로 합칩니다: 영수증 항목은 그대로, 중복된 명세서 거래는 삭제)')) return;
+          try {
+            await sync.saveBatch(R.mergeTwins(recIt, stmIt, data.stmtLines, L.nowIso()), ['Postings', 'StatementLines', 'Transactions']);
+            close(); toast('Merged (합쳤어요)');
+          } catch (e) { toast('Could not merge (합치지 못했어요): ' + (e.message || e)); }
+        } }, 'Merge into one (하나로 합치기)')));
+    }
 
     parts.push(h('div', { class: 'err', id: 'f-err', role: 'alert' }, errText));
 
