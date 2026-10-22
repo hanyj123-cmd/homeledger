@@ -122,6 +122,11 @@ export function parseReceipt(img, categories) {
   return callApi(Object.assign({ action: 'parseReceipt', image: img.base64, mime: img.mime, categories, save: false }, models.payload('receipt')));
 }
 
+// 은행 앱 화면(스크린샷) → 거래 줄. 서버가 { lines: [{ date:'YYYY-MM-DD', description, amount(들어온 돈 +, 나간 돈 −), balance }] } 를 돌려줍니다.
+export function parseStatementImage(img, hint) {
+  return callApi(Object.assign({ action: 'parseStatement', image: img.base64, mime: img.mime, year: (hint && hint.year) || new Date().getFullYear() }, models.payload('receipt')));
+}
+
 export function storeReceipt(img) {
   return callApi({ action: 'saveReceipt', image: img.base64, mime: img.mime, fileName: img.fileName });
 }

@@ -15,6 +15,7 @@ export const DEFAULT_SKIP_RE = 'opening balance|closing balance|balance forward|
 export const UNCATEGORIZED_ID = '9999';
 export const AUTO_MATCH_SCORE = 0.85;
 export const MATCH_WINDOW_DAYS = 5;
+export const LOOSE_DAYS = 2;   // 스크린샷 가져오기: 금액이 같고 날짜가 이 정도 이내면 같은 거래로 봅니다
 
 // ───────── 라이브러리 불러오기 (브라우저에서만) ─────────
 
@@ -451,7 +452,8 @@ export function nameSim(a, b) {
 
 // 명세서 줄 ↔ 이미 입력된 거래 짝짓기. 점수 = 0.4 이름 + 0.3 금액 + 0.3 날짜
 // items = [{txn, ps, desc}], claimed = Set("txnId|accountId")
-export function matchLines(lines, accountId, items, claimed) {
+export function matchLines(lines, accountId, items, claimed, opts) {
+  const win = opts && opts.loose ? LOOSE_DAYS : MATCH_WINDOW_DAYS;
   const cands = [];
   const acct = String(accountId);
   lines.forEach((ln, li) => {
@@ -464,13 +466,14 @@ export function matchLines(lines, accountId, items, claimed) {
       const v = L.num(post.amount_cad);
       if (Math.sign(v) !== sign || Math.abs(Math.abs(v) - want) > 0.005) return;
       const diff = Math.abs(dayNum(ln.date) - dayNum(it.txn.date));
-      if (diff > MATCH_WINDOW_DAYS) return;
+      if (diff > win) return;
       const isTransfer = it.desc.kind === 'TRANSFER';
       const name = isTransfer ? 0.85 : nameSim(ln.description, it.txn.merchant || it.txn.memo || '');
-      let score = 0.4 * name + 0.3 + 0.3 * (1 - diff / (MATCH_WINDOW_DAYS + 1));
+      let score = 0.4 * name + 0.3 + 0.3 * (1 - diff / (win + 1));
       // 영수증으로 입력한 거래(나눈 거래 포함)는 가게 이름이 명세서와 달라도(예: Amazon.ca ↔ AMZN Mktp) 같은 계좌·같은 금액·가까운 날짜면 자동 연결 —
       // 아직 짝이 없는 영수증 거래가 명세서 줄과 따로 한 번 더 들어와 이중으로 잡히는 것을 막습니다. (이름이 맞는 쪽이 먼저 짝지어짐)
-      if (it.txn.receipt_id && score < AUTO_MATCH_SCORE) score = AUTO_MATCH_SCORE + score * 0.01;
+      // 스크린샷(loose)은 가게 이름 표기가 CSV 와 달라서 금액 · 날짜만 같으면 같은 거래로 봅니다.
+      if ((it.txn.receipt_id || (opts && opts.loose)) && score < AUTO_MATCH_SCORE) score = AUTO_MATCH_SCORE + score * 0.01;
       cands.push({ li, ii, score });
     });
   });
@@ -485,6 +488,60 @@ export function matchLines(lines, accountId, items, claimed) {
   return res;
 }
 
+// ───────── 스크린샷(이미지) 가져오기 ─────────
+
+// 화면에 보이는 순서대로의 줄들에서 "거래 후 잔액" 이 안 맞는 줄을 찾습니다.
+// rows = [{ date, signed(들어온 돈 +), balance(null 가능) }] → 이상한 줄 번호 Set
+export function balanceWarnings(rows) {
+  const bad = new Set();
+  const n = rows.length;
+  if (n < 2) return bad;
+  const desc = String(rows[0].date) >= String(rows[n - 1].date);   // 최신이 위 (은행 앱 기본)
+  for (let i = desc ? 0 : 1; i < (desc ? n - 1 : n); i++) {
+    const a = rows[i], b = rows[desc ? i + 1 : i - 1];
+    if (a.balance === null || b.balance === null) continue;
+    if (Math.abs(L.round(b.balance + a.signed, 2) - a.balance) > 0.005) bad.add(i);
+  }
+  return bad;
+}
+
+/**
+ * 서버가 스크린샷에서 읽은 줄 → 가져오기 줄.
+ * results = [{ lines: [{ date, description, amount(들어온 돈 +, 나간 돈 −), balance }] }] (이미지 한 장당 하나)
+ * opts = { flip } 앱의 부호 규칙은 "나간 돈 +" 라서 기본으로 부호를 뒤집습니다. flip=true 면 그대로 둡니다.
+ */
+export function linesFromImages(results, opts) {
+  const flip = !!(opts && opts.flip);
+  const out = { lines: [], skipped: [], needYear: false, year: null, images: results.length };
+  const seen = new Set();
+  let idx = 0;
+  results.forEach((res, k) => {
+    const rows = [];
+    (res.lines || []).forEach((r) => {
+      const dt = parseDate(String(r.date || ''), 'YMD', {});
+      const signed = parseMoney(r.amount);
+      const bal = r.balance === undefined || r.balance === null || r.balance === '' ? null : parseMoney(r.balance);
+      const text = [r.date, r.description, r.amount].join(' ');
+      if (dt.error) { out.skipped.push({ idx: idx++, reason: 'no date (날짜 없음)', text }); return; }
+      if (signed === null || signed === 0) { out.skipped.push({ idx: idx++, reason: 'no amount (금액 없음)', text }); return; }
+      rows.push({ date: dt.iso, signed: L.round(signed, 2), balance: bal === null ? null : L.round(bal, 2), description: String(r.description || '').replace(/\s+/g, ' ').trim() });
+    });
+    const bad = balanceWarnings(rows);
+    rows.forEach((r, i) => {
+      // 겹치게 찍은 화면: 앞 화면에 이미 나온 줄(날짜 · 금액 · 잔액이 모두 같음)은 한 번만
+      const sig = r.balance === null ? '' : r.date + '|' + r.signed + '|' + r.balance + '|' + prefixOf(r.description);
+      if (sig && k > 0 && seen.has(sig)) { out.skipped.push({ idx: idx++, reason: 'overlaps the previous screenshot (앞 화면과 겹침)', text: r.date + ' ' + r.description }); return; }
+      if (sig) seen.add(sig);
+      out.lines.push({
+        idx: idx++, date: r.date, description: r.description, merchant: cleanMerchant(r.description),
+        amount: L.round(flip ? r.signed : -r.signed, 2), foreign: foreignHint(r.description), balance: r.balance,
+        warn: bad.has(i) ? 'Balance does not add up — check this line (잔액이 안 맞아요. 이 줄을 확인하세요)' : ''
+      });
+    });
+  });
+  return out;
+}
+
 // ───────── 미리보기 ─────────
 
 // ctx = { accountId, accMap, rules, items, stmtLines }
@@ -494,8 +551,22 @@ export function buildPreview(parsedLines, ctx) {
   const mine = all.filter((s) => String(s.account_id) === accountId);
   assignKeys(accountId, parsedLines, mine);
   const claimed = new Set(all.filter((s) => s.matched_txn_id).map((s) => String(s.matched_txn_id) + '|' + s.account_id));
+  // 스크린샷: 이미 가져온 명세서 줄과 금액이 같고 날짜가 ±2일 이내면 (이름이 달라도) 중복으로 보고 제외합니다. 한 줄은 한 번만 소모.
+  if (ctx.loose) {
+    const used = new Set();
+    parsedLines.forEach((ln) => {
+      if (ln.dup) return;
+      let best = -1, bd = 99;
+      mine.forEach((e, i) => {
+        if (used.has(i) || centsOf(L.num(e.amount)) !== centsOf(ln.amount) || !/^\d{4}-\d{2}-\d{2}$/.test(String(e.date || ''))) return;
+        const d = Math.abs(dayNum(String(e.date)) - dayNum(ln.date));
+        if (d <= LOOSE_DAYS && d < bd) { bd = d; best = i; }
+      });
+      if (best >= 0) { used.add(best); ln.dup = true; ln.dupLoose = true; ln.altKey = ln.dedupe_key; }
+    });
+  }
   const fresh = parsedLines.filter((l) => !l.dup);
-  const matches = matchLines(fresh, accountId, ctx.items || [], claimed);
+  const matches = matchLines(fresh, accountId, ctx.items || [], claimed, { loose: !!ctx.loose });
   const mById = new Map(fresh.map((l, i) => [l, matches[i]]));
   const guess = makeGuesser({ rules: ctx.rules, items: ctx.items, accounts: ctx.accounts || Array.from(ctx.accMap.values()), accMap: ctx.accMap, statementAccountId: accountId });
   return parsedLines.map((ln) => {

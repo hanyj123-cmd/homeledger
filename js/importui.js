@@ -6,15 +6,16 @@ import * as sync from './sync.js';
 import { openRemember } from './rememberui.js';
 import { SOURCE_LABEL, askAI } from './categorize.js';
 import { CONFIG } from './config.js';
+import * as R from './receipts.js';
 
 // 화면이 바뀌어도 작업 중이던 내용을 유지합니다.
 const S = {
   accountId: '', fileName: '', kind: '', rows: [], profile: null, profileFrom: '', promptYear: String(new Date().getFullYear()),
-  parsed: null, preview: [], busy: false, error: '', libs: null, done: null, aiBusy: false, aiMsg: ''
+  parsed: null, preview: [], busy: false, error: '', libs: null, done: null, aiBusy: false, aiMsg: '', imgRaw: [], imgFlip: false, reading: ''
 };
 
 export function reset() {
-  Object.assign(S, { fileName: '', kind: '', rows: [], profile: null, profileFrom: '', parsed: null, preview: [], busy: false, error: '', done: null, aiBusy: false, aiMsg: '' });
+  Object.assign(S, { fileName: '', kind: '', rows: [], profile: null, profileFrom: '', parsed: null, preview: [], busy: false, error: '', done: null, aiBusy: false, aiMsg: '', imgRaw: [], imgFlip: false, reading: '' });
 }
 
 export function resetIfDone() { if (S.done) reset(); }
@@ -35,7 +36,7 @@ export function render(api) {
     root.append(pickCard());
     if (S.error) root.append(h('div', { class: 'err', role: 'alert', id: 'imp-err' }, S.error));
     if (S.parsed) {
-      root.append(layoutCard(), reviewCard());
+      root.append(...(S.kind === 'IMAGE' ? [] : [layoutCard()]), reviewCard());
     }
   }
 
@@ -45,20 +46,50 @@ export function render(api) {
     const money = moneyAccounts();
     const opt = (a) => h('option', { value: a.account_id, selected: String(a.account_id) === String(S.accountId) }, Lg.accLabel(a));
     const sel = h('select', {
-      id: 'imp-acct', onchange: (e) => { S.accountId = e.target.value; if (S.rows.length) loadProfileAndParse(); else draw(); }
+      id: 'imp-acct', onchange: (e) => { S.accountId = e.target.value; if (S.rows.length) loadProfileAndParse(); else if (S.kind === 'IMAGE' && S.imgRaw.length) reparse(); else draw(); }
     },
     h('option', { value: '' }, 'Select account… (계좌 선택)'),
     h('optgroup', { label: 'Assets (자산)' }, money.filter((a) => a.type === 'ASSET').map(opt)),
     h('optgroup', { label: 'Credit & loans (카드 · 대출)' }, money.filter((a) => a.type === 'LIABILITY').map(opt)));
     const file = h('input', {
-      type: 'file', id: 'imp-file', accept: '.csv,.xlsx,.xls,.pdf,text/csv',
-      onchange: (e) => { const f = e.target.files && e.target.files[0]; if (f) onFile(f); }
+      type: 'file', id: 'imp-file', accept: '.csv,.xlsx,.xls,.pdf,text/csv,image/*', multiple: true,
+      onchange: (e) => { const fs = Array.from(e.target.files || []); if (fs.length) onFiles(fs); }
     });
     return h('div', { class: 'card' },
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Account (이 명세서의 계좌)'), sel),
-      h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'File (파일: CSV · XLSX · PDF)'), file),
-      S.fileName ? h('div', { class: 'muted small' }, S.fileName + ' · ' + S.kind + (S.kind === 'PDF' ? ' — best-effort: check every line (PDF는 시도형입니다. 모든 줄을 꼭 확인하세요)' : '')) : null,
-      h('div', { class: 'muted small' }, 'Files are read on this device only (파일은 이 기기에서만 읽습니다 — 외부로 전송되지 않습니다).'));
+      h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'File (파일: CSV · XLSX · PDF · 스크린샷)'), file),
+      S.reading ? h('div', { class: 'note', id: 'imp-reading', role: 'status' }, S.reading) : null,
+      S.fileName ? h('div', { class: 'muted small' }, S.fileName + ' · ' + S.kind + (S.kind === 'IMAGE' ? ' — read by AI: check every line (AI 가 읽었어요. 모든 줄을 꼭 확인하세요)' : '') + (S.kind === 'PDF' ? ' — best-effort: check every line (PDF는 시도형입니다. 모든 줄을 꼭 확인하세요)' : '')) : null,
+      h('div', { class: 'muted small' }, 'CSV · XLSX · PDF are read on this device only (CSV · XLSX · PDF 는 이 기기에서만 읽습니다). Screenshots are sent to the AI model to be read (스크린샷은 읽기 위해 AI 모델로 전송됩니다).'));
+  }
+
+  function onFiles(files) {
+    const imgs = files.filter((f) => /^image\//i.test(f.type) || /\.(png|jpe?g|heic|heif|webp)$/i.test(f.name || ''));
+    if (imgs.length && imgs.length !== files.length) { S.error = 'Pick either screenshots or one CSV/XLSX/PDF file, not both (스크린샷과 CSV/XLSX/PDF 는 함께 고를 수 없어요).'; draw(); return; }
+    if (imgs.length) return onImages(imgs);
+    return onFile(files[0]);
+  }
+
+  // 스크린샷: 한 장씩 AI 로 읽어서 줄로 만들고, 이후는 CSV 와 같은 미리보기를 씁니다.
+  async function onImages(files) {
+    if (!S.accountId) { S.error = 'Select the account first (먼저 계좌를 선택하세요).'; draw(); return; }
+    if (files.length > 8) { S.error = 'Up to 8 screenshots at a time (한 번에 8장까지).'; draw(); return; }
+    S.error = ''; S.busy = true; S.parsed = null; S.rows = []; S.preview = [];
+    try {
+      const prepared = [];
+      for (let i = 0; i < files.length; i++) { S.reading = 'Preparing ' + (i + 1) + '/' + files.length + '… (준비 중)'; draw(); prepared.push(await R.prepareImage(files[i], 'orig')); }
+      S.reading = 'Reading ' + files.length + ' screenshot(s) with AI… (AI 가 읽는 중 — 잠시만요)'; draw();
+      const res = await Promise.all(prepared.map((p) => R.parseStatementImage(p)));
+      S.imgRaw = res.map((r) => ({ lines: Array.isArray(r.lines) ? r.lines : [] }));
+      S.fileName = files.map((f) => f.name).join(', '); S.kind = 'IMAGE';
+      S.reading = '';
+      if (!S.imgRaw.some((r) => r.lines.length)) { S.error = 'No transactions could be read (읽힌 거래가 없습니다). Try a sharper, uncropped screenshot (더 선명하고 잘리지 않은 화면으로 다시).'; S.parsed = null; draw(); return; }
+      reparse();
+    } catch (e) {
+      S.reading = '';
+      S.error = 'Could not read the screenshot (스크린샷을 읽지 못했습니다): ' + (e && e.message ? e.message : e);
+      S.parsed = null; draw();
+    } finally { S.busy = false; }
   }
 
   async function onFile(file) {
@@ -66,7 +97,7 @@ export function render(api) {
     S.error = ''; S.busy = true;
     try {
       const res = await L.readFileRows(file, S.libs);
-      S.fileName = file.name; S.kind = res.kind; S.rows = res.rows;
+      S.fileName = file.name; S.kind = res.kind; S.rows = res.rows; S.imgRaw = [];
       if (!S.rows.length) { S.error = 'No rows found (읽을 수 있는 줄이 없습니다). ' + (res.kind === 'PDF' ? 'PDF 가 스캔 이미지이거나 형식이 다를 수 있습니다. CSV/XLSX 를 권장합니다.' : ''); S.parsed = null; draw(); return; }
       loadProfileAndParse();
     } catch (e) {
@@ -90,10 +121,11 @@ export function render(api) {
 
   function reparse() {
     S.error = '';
-    const parsed = L.applyProfile(S.rows, S.profile, { filename: S.fileName, promptYear: S.promptYear });
+    const image = S.kind === 'IMAGE';
+    const parsed = image ? L.linesFromImages(S.imgRaw, { flip: S.imgFlip }) : L.applyProfile(S.rows, S.profile, { filename: S.fileName, promptYear: S.promptYear });
     S.parsed = parsed;
     S.preview = L.buildPreview(parsed.lines, {
-      accountId: S.accountId, accMap: api.accMap, accounts: api.accounts, rules: api.data.rules, items: api.items, stmtLines: api.data.stmtLines
+      accountId: S.accountId, accMap: api.accMap, accounts: api.accounts, rules: api.data.rules, items: api.items, stmtLines: api.data.stmtLines, loose: image
     });
     draw();
   }
@@ -169,7 +201,7 @@ export function render(api) {
     }
     const t = L.previewTotals(S.preview);
     const flipBox = h('label', { class: 'check' },
-      h('input', { type: 'checkbox', id: 'imp-flip', checked: Lg.truthy(S.profile.sign_flip), onchange: (e) => { S.profile.sign_flip = e.target.checked; reparse(); } }),
+      h('input', { type: 'checkbox', id: 'imp-flip', checked: S.kind === 'IMAGE' ? S.imgFlip : Lg.truthy(S.profile.sign_flip), onchange: (e) => { if (S.kind === 'IMAGE') S.imgFlip = e.target.checked; else S.profile.sign_flip = e.target.checked; reparse(); } }),
       h('span', null, 'Flip sign (부호 반대로) — use if purchases show as ↑ in (사용 내역이 ↑ 로 보이면 체크)'));
     wrap.append(
       h('div', { class: 'summary' },
@@ -311,6 +343,8 @@ export function render(api) {
         h('div', { class: 'row-sub' }, ln.date + (ln.foreign ? ' · ' + ln.foreign.currency + ' ' + ln.foreign.amount : ''))),
       h('div', { class: 'row-amt ' + (out ? 'out' : 'in') }, (out ? '↓ ' : '↑ ') + fmt(Math.abs(ln.amount))),
       matchNote,
+      ln.warn ? h('div', { class: 'row-sub warn-text', style: 'color:#d9822b' }, '⚠ ' + ln.warn) : null,
+      ln.dupLoose ? h('div', { class: 'row-sub' }, 'Same amount and nearly the same date as one you already imported (이미 가져온 거래와 금액이 같고 날짜가 비슷해서 제외했어요)') : null,
       h('div', { class: 'two' }, aSel, targetWrap),
       badge);
     toggle(); setBadge();
@@ -333,8 +367,8 @@ export function render(api) {
     btn.disabled = true;
     try {
       // 저장할 열 설정에는 실제로 쓴 연도 방식을 기록
-      const prof = Object.assign({}, S.profile);
-      if (S.parsed.lines.length && L.yearHintFromName(S.fileName) && prof.year_source !== 'COLUMN') prof.year_source = 'FILENAME';
+      const prof = S.kind === 'IMAGE' ? null : Object.assign({}, S.profile);
+      if (prof && S.parsed.lines.length && L.yearHintFromName(S.fileName) && prof.year_source !== 'COLUMN') prof.year_source = 'FILENAME';
       const rec = L.buildRecords(S.preview, {
         accountId: S.accountId, accMap: api.accMap, rules: api.data.rules, profile: prof, now: Lg.nowIso()
       });
