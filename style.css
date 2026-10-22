@@ -2402,3 +2402,8 @@ html[data-layout="tablet"] .acl-nm .ko { margin-left: 0; }
 .rc-owner-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; font-size: 13px; }
 .rc-owner-row .rc-owner-lbl { color: var(--muted, #667); white-space: nowrap; }
 .rc-owner-row .rc-item-owner { flex: 1; min-width: 0; }
+
+/* 거래 탭: 이번 달 / 전체 누적 전환 */
+.cumul-row { margin: 6px 0 2px; }
+.cumul-row .chipbtn { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line, #8886); background: transparent; color: inherit; cursor: pointer; }
+.cumul-row .chipbtn.on { background: var(--accent, #2f7d4f); color: #fff; border-color: transparent; }

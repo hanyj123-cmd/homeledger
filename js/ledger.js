@@ -557,10 +557,11 @@ export function activePostings(txns, postings) {
   return postings.filter((p) => !truthy(p.deleted) && live.has(String(p.txn_id)));
 }
 
+// ym 이 비어 있으면 전체 기간(누적)
 export function monthSummary(items, accMap, ym) {
   let income = 0, spending = 0;
   items.forEach((it) => {
-    if (monthOf(it.txn.date) !== ym) return;
+    if (ym && monthOf(it.txn.date) !== ym) return;
     it.ps.forEach((p) => {
       const a = accMap.get(String(p.account_id));
       if (!a) return;

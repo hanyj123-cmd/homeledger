@@ -142,7 +142,11 @@ export function render(api) {
       h('div', { class: 'metric sub', id: 'bn-limit' }, h('div', { class: 'metric-lab' }, liab ? 'Credit limit (한도)' : 'Overdraft limit (마이너스 한도)'), h('div', { class: 'metric-val' }, fmt(lim)))];
   }
   const month = state.month;
-  const monthItems = d.items.filter((it) => L.monthOf(it.txn.date) === month && (!acct || it.ps.some((p) => !L.truthy(p.deleted) && String(p.account_id) === String(acct.account_id))));
+  // 요약 칸을 이번 달 / 전체 누적으로 바꿔 볼 수 있습니다 (기기에 기억)
+  if (state.cumul === undefined) { try { state.cumul = localStorage.getItem('hl_cumul') === '1'; } catch (e) { state.cumul = false; } }
+  const cum = !!state.cumul;
+  const per = cum ? 'all time (누적)' : 'month';
+  const monthItems = d.items.filter((it) => (cum || L.monthOf(it.txn.date) === month) && (!acct || it.ps.some((p) => !L.truthy(p.deleted) && String(p.account_id) === String(acct.account_id))));
   const metrics = h('div', { class: 'metrics' });
   if (acct) {
     let inn = 0, out = 0;
@@ -152,17 +156,17 @@ export function render(api) {
     metrics.append(
       h('div', { class: 'metric', id: 'bn-main' }, h('div', { class: 'metric-lab' }, liab ? 'Balance owed (사용 잔액)' : 'Current balance (현재 잔액)'), h('div', { class: 'metric-val' }, fmt(bal))),
       ...limitMetrics(acct, bal, liab),
-      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, liab ? 'Payments · month (납부)' : 'Money in · month (입금)'), h('div', { class: 'metric-val' }, fmt(L.round(inn, 2)))),
-      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, liab ? 'Charges · month (사용)' : 'Money out · month (출금)'), h('div', { class: 'metric-val' }, fmt(L.round(out, 2)))));
+      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, liab ? 'Payments · ' + per + ' (납부)' : 'Money in · ' + per + ' (입금)'), h('div', { class: 'metric-val' }, fmt(L.round(inn, 2)))),
+      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, liab ? 'Charges · ' + per + ' (사용)' : 'Money out · ' + per + ' (출금)'), h('div', { class: 'metric-val' }, fmt(L.round(out, 2)))));
   } else {
     const bal = L.accountBalances(accounts, d.items.flatMap((i) => i.ps));
     const nw = L.netWorth(accounts, bal);
-    const s = L.monthSummary(d.items, d.accMap, month);
+    const s = L.monthSummary(d.items, d.accMap, cum ? '' : month);
     metrics.append(
       h('div', { class: 'metric', id: 'bn-main' }, h('div', { class: 'metric-lab' }, 'Net worth (순자산)'), h('div', { class: 'metric-val' }, fmt(nw.net))),
-      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, 'Income · month (수입)'), h('div', { class: 'metric-val', id: 'bn-in' }, fmt(s.income))),
-      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, 'Spending · month (지출)'), h('div', { class: 'metric-val', id: 'bn-out' }, fmt(s.spending))),
-      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, 'Net · month (순수입)'), h('div', { class: 'metric-val', id: 'bn-net' }, (s.net < 0 ? '−' : '') + fmt(Math.abs(s.net)))));
+      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, 'Income · ' + per + ' (수입)'), h('div', { class: 'metric-val', id: 'bn-in' }, fmt(s.income))),
+      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, 'Spending · ' + per + ' (지출)'), h('div', { class: 'metric-val', id: 'bn-out' }, fmt(s.spending))),
+      h('div', { class: 'metric sub' }, h('div', { class: 'metric-lab' }, 'Net · ' + per + ' (순수입)'), h('div', { class: 'metric-val', id: 'bn-net' }, (s.net < 0 ? '−' : '') + fmt(Math.abs(s.net)))));
   }
   const pick = h('label', { class: 'acct-pick' },
     h('span', { class: 'nm' }, acct ? acct.name : 'All accounts (전체 계좌)'),
@@ -177,6 +181,9 @@ export function render(api) {
       h('optgroup', { label: 'Credit & loans (카드 · 대출)' }, money.filter((a) => a.type === 'LIABILITY').map((a) => h('option', { value: a.account_id, selected: acct && String(a.account_id) === String(acct.account_id) }, L.accLabel(a))))));
   frag.append(h('section', { class: 'banner' }, h('div', { class: 'banner-in' },
     h('div', { class: 'banner-row' }, pick, h('div', { class: 'asof' }, 'As of ', h('b', null, fmtDate(L.todayStr())))),
+    h('div', { class: 'cumul-row' }, h('button', { type: 'button', class: 'chipbtn' + (cum ? ' on' : ''), id: 'cumul-btn', 'aria-pressed': String(cum), title: 'Totals for this month or for all time (이번 달 / 전체 누적 합계 보기)',
+      onclick: () => { state.cumul = !cum; try { localStorage.setItem('hl_cumul', state.cumul ? '1' : '0'); } catch (e) { /* ignore */ } api.rerender(); } },
+      cum ? 'Showing: all time (전체 누적) · tap for month (이번 달)' : 'Showing: this month (이번 달) · tap for all time (전체 누적)')),
     metrics)));
 
   // ── 알약 버튼
