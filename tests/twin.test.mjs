@@ -16,4 +16,12 @@ ok(m.Transactions[1].txn_id === 's' && m.Transactions[1].deleted === true, 'stmt
 ok(m.Postings.length === 2 && m.Postings.every((p) => p.deleted && p.txn_id === 's'), 'stmt postings deleted');
 ok(m.StatementLines[0].matched_txn_id === 'r', 'stmt line repointed');
 ok(R.findTwin([{ ...rec, txn: { ...rec.txn, statement_line_id: 'sl1' } }, stm], stm, accMap).length === 0, 'already linked → no twin');
+// 나눈 거래(카테고리 3줄)도 카드 쪽 합계로 같은 거래를 찾아야 함
+{
+  const acc2 = new Map([['2010', acc('2010', 'LIABILITY')], ['5010', acc('5010', 'EXPENSE')], ['5020', acc('5020', 'EXPENSE')], ['5030', acc('5030', 'EXPENSE')], ['9999', acc('9999', 'EXPENSE')]]);
+  const sp = { txn: { ...rec.txn, txn_id: 'r2' }, ps: [P('a', 'r2', '5010', 100), P('a2', 'r2', '5020', 60.5), P('a3', 'r2', '5030', 43.28), P('b', 'r2', '2010', -203.78)] };
+  ok(R.findTwin([sp, stm], sp, acc2).length === 1 && R.findTwin([sp, stm], stm, acc2).length === 1, 'split receipt twin');
+  const m2 = R.mergeTwins(sp, stm, [], 'now');
+  ok(m2.Transactions[0].txn_id === 'r2' && m2.Postings.length === 2, 'split kept intact');
+}
 console.log(n - bad + '/' + n + ' ok'); process.exit(bad ? 1 : 0);
