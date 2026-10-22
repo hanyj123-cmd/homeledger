@@ -147,7 +147,7 @@ export function rateOf(code, taxCodes) {
 }
 
 export function newItem(over) {
-  return Object.assign({ name: '', name_raw: '', amountText: '', is_discount: false, tax_code: '', category_id: '', qty: null, unit_price: null }, over || {});
+  return Object.assign({ name: '', name_raw: '', amountText: '', is_discount: false, tax_code: '', category_id: '', qty: null, unit_price: null, owner: '' }, over || {});
 }
 
 // ───────── 영어(한국어) 이중 표기 · 세금/팁 줄 바로잡기 ─────────
@@ -431,9 +431,14 @@ export function makeReceiptRecords(draft, ctx) {
   // 카테고리별 합계 (팁은 가장 큰 항목의 카테고리, 또는 직접 고른 카테고리)
   const bigCat = al.lines.slice().sort((x, y) => Math.abs(y.amount) - Math.abs(x.amount))[0].item.category_id;
   const tipCat = al.tip > 0 ? (A(draft.tipCategory) && A(draft.tipCategory).type === 'EXPENSE' ? draft.tipCategory : bigCat) : '';
-  const groups = new Map();
-  al.lines.forEach((ln) => groups.set(String(ln.item.category_id), L.round((groups.get(String(ln.item.category_id)) || 0) + ln.gross, al.dec)));
-  if (al.tip > 0) groups.set(String(tipCat), L.round((groups.get(String(tipCat)) || 0) + al.tip, al.dec));
+  // 항목마다 소유자를 고를 수 있어서, 같은 카테고리라도 소유자가 다르면 분개를 따로 만듭니다. (항목에서 안 고르면 영수증의 기본 소유자)
+  const txnOwner = draft.owner || 'Joint';
+  const effOwner = (it) => String(it.owner || txnOwner);
+  const groups = new Map();      // key("카테고리|소유자") → 금액
+  const gInfo = new Map();       // key → { cat, owner }
+  const addG = (cat, owner, v) => { const k = String(cat) + '|' + owner; gInfo.set(k, { cat: String(cat), owner }); groups.set(k, L.round((groups.get(k) || 0) + v, al.dec)); };
+  al.lines.forEach((ln) => addG(ln.item.category_id, effOwner(ln.item), ln.gross));
+  if (al.tip > 0) addG(tipCat, txnOwner, al.tip);
   const cats = Array.from(groups.keys());
 
   // 통화: 외화면 CAD 청구액(정확) 또는 환율(임시)
@@ -456,13 +461,13 @@ export function makeReceiptRecords(draft, ctx) {
   const ex = ctx.existing || null;
   const txnId = ex ? ex.txn.txn_id : L.newId('t');
   const oldPs = ex ? ex.ps.filter((p) => !L.truthy(p.deleted)) : [];
-  const accIds = cats.concat([String(draft.fromId)]);
+  const accIds = cats.map((k) => gInfo.get(k).cat).concat([String(draft.fromId)]);
   const pairP = pairExisting(oldPs, (p) => String(p.account_id), accIds);
-  const mkP = (accId, i, orig, cad) => ({
+  const mkP = (accId, i, orig, cad, owner) => ({
     posting_id: pairP.assigned[i] ? pairP.assigned[i].posting_id : L.newId('p'), txn_id: txnId, line_id: '', account_id: String(accId),
-    amount_cad: cad, amount_orig: orig, currency: ccy, fx_rate: rate, memo: '', updated_at: now, deleted: false
+    amount_cad: cad, amount_orig: orig, currency: ccy, fx_rate: rate, memo: '', owner: owner && owner !== txnOwner ? owner : '', updated_at: now, deleted: false
   });
-  const postings = cats.map((c, i) => mkP(c, i, groups.get(c), cadOf.get(c)));
+  const postings = cats.map((c, i) => mkP(gInfo.get(c).cat, i, groups.get(c), cadOf.get(c), gInfo.get(c).owner));
   postings.push(mkP(draft.fromId, cats.length, -al.total, -cadTotal));
   pairP.leftovers.forEach((p) => postings.push(Object.assign({}, p, { deleted: true, updated_at: now })));
   const sum = postings.filter((p) => !L.truthy(p.deleted)).reduce((s, p) => s + p.amount_cad, 0);
@@ -471,16 +476,16 @@ export function makeReceiptRecords(draft, ctx) {
   // 항목 행 (팁은 별도 행)
   const rows = al.lines.map((ln) => ({
     name: ln.item.name || '(item)', name_raw: ln.item.name_raw || ln.item.name || '', qty: ln.item.qty, unit_price: ln.item.unit_price,
-    amount: ln.amount, is_discount: !!ln.item.is_discount, tax_code: ln.item.tax_code || '', tax: ln.tax, cat: String(ln.item.category_id)
+    amount: ln.amount, is_discount: !!ln.item.is_discount, tax_code: ln.item.tax_code || '', tax: ln.tax, cat: String(ln.item.category_id), owner: String(ln.item.owner || '')
   }));
-  if (al.tip > 0) rows.push({ name: TIP_LABEL, name_raw: TIP_LABEL, qty: null, unit_price: null, amount: al.tip, is_discount: false, tax_code: 'NONE', tax: 0, cat: String(tipCat) });
+  if (al.tip > 0) rows.push({ name: TIP_LABEL, name_raw: TIP_LABEL, qty: null, unit_price: null, amount: al.tip, is_discount: false, tax_code: 'NONE', tax: 0, cat: String(tipCat), owner: '' });
   const oldLines = ex ? (ex.lineItems || []).filter((l) => !L.truthy(l.deleted)).sort((a, b) => L.num(a.line_no) - L.num(b.line_no)) : [];
   const confidence = draft.meta && draft.meta.confidence !== undefined && draft.meta.confidence !== null ? draft.meta.confidence : '';
   const lineItems = rows.map((rw, i) => ({
     line_id: oldLines[i] ? oldLines[i].line_id : L.newId('l'), txn_id: txnId, line_no: i + 1, item_name: rw.name, item_name_raw: rw.name_raw,
     qty: rw.qty === null || rw.qty === undefined ? '' : rw.qty, unit_price: rw.unit_price === null || rw.unit_price === undefined ? '' : rw.unit_price,
     line_amount: rw.amount, is_discount: rw.is_discount, tax_code: rw.tax_code, tax_amount: rw.tax, category_account_id: rw.cat,
-    ai_confidence: confidence, user_confirmed: true, updated_at: now, deleted: false
+    ai_confidence: confidence, user_confirmed: true, updated_at: now, deleted: false, owner: rw.owner
   }));
   oldLines.slice(rows.length).forEach((l) => lineItems.push(Object.assign({}, l, { deleted: true, updated_at: now })));
 
@@ -504,7 +509,7 @@ export function makeReceiptRecords(draft, ctx) {
     total_cad: cadTotal, source: base.source || 'RECEIPT', status: base.status || 'PENDING_MATCH', owner: draft.owner || 'Joint',
     is_passthrough: false, receipt_id: receiptId, created_at: base.created_at || now, updated_at: now, deleted: false
   });
-  const rule = draft.merchant && cats.length === 1 ? L.learnRule(ctx.rules || [], draft.merchant, cats[0], now) : null;
+  const rule = draft.merchant && new Set(cats.map((k) => gInfo.get(k).cat)).size === 1 ? L.learnRule(ctx.rules || [], draft.merchant, gInfo.get(cats[0]).cat, now) : null;
   return { txn, postings, lineItems, receipt, rule, alloc: al };
 }
 
@@ -546,7 +551,7 @@ export function draftFromExisting(txn, ctx) {
   const tipLine = lines.find((l) => String(l.item_name) === TIP_LABEL && String(l.tax_code) === 'NONE');
   const items = lines.filter((l) => l !== tipLine).map((l) => newItem({
     name: l.item_name, name_raw: l.item_name_raw, amountText: String(L.round(Math.abs(L.num(l.line_amount)), dec)),
-    is_discount: L.truthy(l.is_discount), tax_code: l.tax_code || '', category_id: String(l.category_account_id || ''),
+    is_discount: L.truthy(l.is_discount), tax_code: l.tax_code || '', category_id: String(l.category_account_id || ''), owner: String(l.owner || ''),
     qty: l.qty === '' ? null : L.num(l.qty), unit_price: l.unit_price === '' ? null : L.num(l.unit_price)
   }));
   const m = ctx.receipt ? { drive: { fileId: ctx.receipt.drive_file_id, fileName: ctx.receipt.file_name }, sha256: ctx.receipt.sha256, confidence: ctx.receipt.confidence } : null;

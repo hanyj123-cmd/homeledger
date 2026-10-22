@@ -212,6 +212,10 @@ function openReview(api, draft, close, show, shell) {
         h('div', { class: 'rc-item-bot' },
           h('select', { class: 'rc-cat', 'aria-label': 'Category (카테고리)', onchange: (e) => { it.category_id = e.target.value; } }, catOptions(it.category_id)),
           ccy === 'CAD' ? h('select', { class: 'rc-tax', 'aria-label': 'Tax (세금)', onchange: (e) => { it.tax_code = e.target.value; upd(); } }, taxOptions(it.tax_code)) : null),
+        h('label', { class: 'rc-owner-row' }, h('span', { class: 'rc-owner-lbl' }, 'Whose? (누가 썼나)'),
+          h('select', { class: 'rc-item-owner', 'aria-label': 'Owner of this item (이 항목 소유자)', onchange: (e) => { it.owner = e.target.value; } },
+            [h('option', { value: '', selected: !it.owner }, 'Default · ' + L.ownerLabel(draft.owner || 'Joint') + ' (기본)')]
+              .concat(CONFIG.OWNERS.map((o) => h('option', { value: o, selected: o === it.owner }, L.ownerLabel(o)))))),
         h('label', { class: 'check rc-disc' },
           h('input', { type: 'checkbox', checked: it.is_discount, onchange: (e) => { it.is_discount = e.target.checked; draw(); } }),
           h('span', null, 'Discount / coupon — subtract (할인 · 쿠폰: 금액 차감)')),
@@ -277,7 +281,7 @@ function openReview(api, draft, close, show, shell) {
       // 소유자는 기본 Joint (계좌 소유자로 바꾸지 않음)
     } }, moneyOptions(draft.fromId)), payBox));
     drawPay();
-    rows.push(field('Owner (소유자)', h('select', { id: 'rc-owner', onchange: (e) => { draft.owner = e.target.value; } },
+    rows.push(field('Default owner (기본 소유자) — items can differ (항목별로 바꿀 수 있어요)', h('select', { id: 'rc-owner', onchange: (e) => { draft.owner = e.target.value; draw(); } },
       CONFIG.OWNERS.map((o) => h('option', { value: o, selected: o === draft.owner }, L.ownerLabel(o))))));
 
     rows.push(h('h2', { class: 'sect' }, 'Items (항목) · ' + draft.items.length));

@@ -11,7 +11,7 @@ export const CONFIG = {
   SYNC_SHEETS: ['Accounts', 'TaxCodes', 'Settings', 'Rules', 'FxRates', 'Transactions', 'Postings', 'ImportProfiles', 'StatementLines', 'Receipts', 'LineItems', 'Budgets'],
   AUTO_SYNC_MS: 60000,
   RECEIPT_API_URL: 'https://script.google.com/macros/s/AKfycbzMiItzeZw23yPNth8Fk7khP3DP012RoMIxHBrVFvyxc2kwrjHttlSEePdLWf9diNrv/exec',
-  APP_VERSION: '0.24.0'
+  APP_VERSION: '0.25.0'
 };
 
 // 각 시트의 첫 번째 열 = 행의 고유 키
@@ -58,6 +58,6 @@ export const HEADERS = {
     'parse_status', 'parse_model', 'parsed_json', 'confidence', 'error', 'uploaded_at'].concat(TAIL),
   LineItems: ['line_id', 'txn_id', 'line_no', 'item_name', 'item_name_raw', 'qty', 'unit_price',
     'line_amount', 'is_discount', 'tax_code', 'tax_amount', 'category_account_id',
-    'ai_confidence', 'user_confirmed'].concat(TAIL),
+    'ai_confidence', 'user_confirmed'].concat(TAIL, ['owner']),
   Budgets: ['budget_id', 'type', 'vintage', 'year', 'month', 'account_id', 'amount_cad', 'rationale', 'locked'].concat(TAIL)
 };

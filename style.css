@@ -2397,3 +2397,8 @@ html[data-layout="tablet"] .acl { padding: 4px 18px 16px; }
 html[data-layout="tablet"] .acl-title { font-size: 1.55rem; }
 html[data-layout="tablet"] .acl-nm { flex-direction: column; align-items: flex-start; }
 html[data-layout="tablet"] .acl-nm .ko { margin-left: 0; }
+
+/* 영수증 항목별 소유자 */
+.rc-owner-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; font-size: 13px; }
+.rc-owner-row .rc-owner-lbl { color: var(--muted, #667); white-space: nowrap; }
+.rc-owner-row .rc-item-owner { flex: 1; min-width: 0; }
