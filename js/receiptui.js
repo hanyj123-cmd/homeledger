@@ -200,12 +200,22 @@ function openReview(api, draft, close, show, shell) {
       }
     };
 
+    const nameBox = (it) => {
+      const ta = h('textarea', { class: 'rc-name', rows: 1, 'aria-label': 'Item name (품명)', placeholder: 'Item (품명)', autocomplete: 'off', spellcheck: 'false',
+        oninput: (e) => { it.name = e.target.value.replace(/\n/g, ' '); fit(e.target); },
+        onkeydown: (e) => { if (e.key === 'Enter') e.preventDefault(); } });
+      ta.value = it.name;
+      const fit = (el) => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => fit(ta)); else fit(ta);
+      return ta;
+    };
     const itemCard = (it, idx) => {
       const del = h('button', { type: 'button', class: 'icon rc-del', 'aria-label': 'Remove item (항목 삭제)', onclick: () => { draft.items.splice(idx, 1); draw(); } }, '✕');
       const upd = () => updateSum();
       return h('div', { class: 'card rc-item' + (it.is_discount ? ' disc' : ''), 'data-idx': idx },
         h('div', { class: 'rc-item-top' },
-          h('input', { type: 'text', class: 'rc-name', 'aria-label': 'Item name (품명)', value: it.name, placeholder: 'Item (품명)', autocomplete: 'off', oninput: (e) => { it.name = e.target.value; } }),
+          // 긴 품명은 한 줄로 잘리지 않고 아래로 내려가서 전부 보이도록 (입력하면 높이가 자동으로 늘어남)
+          nameBox(it),
           h('input', { type: 'text', class: 'rc-amt', 'aria-label': 'Amount (금액)', inputmode: 'decimal', value: it.amountText, placeholder: '0.00', autocomplete: 'off',
             oninput: (e) => { it.amountText = e.target.value; upd(); } }),
           del),

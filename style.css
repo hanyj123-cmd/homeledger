@@ -2407,3 +2407,6 @@ html[data-layout="tablet"] .acl-nm .ko { margin-left: 0; }
 .cumul-row { margin: 6px 0 2px; }
 .cumul-row .chipbtn { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line, #8886); background: transparent; color: inherit; cursor: pointer; }
 .cumul-row .chipbtn.on { background: var(--accent, #2f7d4f); color: #fff; border-color: transparent; }
+
+/* 영수증 항목 이름: 길면 줄바꿈해서 전부 보이게 */
+textarea.rc-name { resize: none; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.35; min-height: 44px; font: inherit; box-sizing: border-box; width: 100%; }
