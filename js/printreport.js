@@ -1,6 +1,7 @@
 // 인쇄용 종합 재무 보고서 (US Letter). 화면을 그대로 찍는 대신, 별도의 HTML 문서를 만들어
 // 숨긴 iframe 에 넣고 브라우저 인쇄(= PDF 미리보기 / 저장)를 엽니다.
-//   openPrintReport(api, { tab, month })  — 헤더의 Print 버튼에서 호출
+//   openPrintReport(api, { tab, month })  — 인쇄 버튼: 넣을 내용 · 달을 고르는 창을 먼저 띄움
+//   printReportNow(api, { tab, month, sections }) — 고른 내용으로 바로 인쇄 미리보기
 //   buildReportHtml(api, { tab, month })  — 완성된 HTML 문자열 (테스트용)
 // 숫자는 모두 reports.js / insights.js / budget.js / valuation.js 의 같은 계산을 다시 씁니다.
 // 별도 문서이므로 앱의 다크 모드와 상관없이 항상 밝은 인쇄용 색을 씁니다.
@@ -259,28 +260,20 @@ function emptyNote(en) { return '<p class="empty">' + t(en) + '</p>'; }
 // 1) 표지 + 2) 요약
 const periodTitle = (ym) => { const [y, m] = ymParts(ym); const en = MONTHS_LONG[m - 1] + ' ' + y, ko = y + '년 ' + m + '월'; const l = lang(); return l === 'en' ? esc(en) : l === 'ko' ? esc(ko) : esc(en) + ' <span class="hk">' + esc(ko) + '</span>'; };
 function coverBlock(D, F, sections) {
-  // 업무 메모 형식: 받는 사람 · 보낸 곳 · 날짜 · 제목 → 목적 한 문단 → 차례
-  const c = D.isCur;
-  const [y, m] = ymParts(D.ym);
-  const purpose = bi(
-    'This memo reports the household\'s finances for ' + MONTHS_LONG[m - 1] + ' ' + y + ': income and spending, the balance sheet at month-end, budget, debt and the people and merchants behind the numbers. '
-      + (c.income || c.expense ? 'In short, ' + F.money(c.income) + ' came in, ' + F.money(c.expense) + ' went out' + (c.income > 0 ? ' and ' + (c.net >= 0 ? F.money(c.net) + ' was kept' : F.money(-c.net) + ' more was spent than earned') : '') + '; net worth stands at ' + F.money(D.bs.net) + '.' : 'No income or spending has been recorded for the month yet; net worth stands at ' + F.money(D.bs.net) + '.'),
-    y + '년 ' + m + '월 가계 재무 현황을 정리한 메모입니다. 수입 · 지출, 월말 재무상태, 예산, 부채, 사람 · 업체별 내역을 담았습니다. '
-      + (c.income || c.expense ? '요약하면 수입 ' + F.money(c.income) + ', 지출 ' + F.money(c.expense) + (c.income > 0 ? (c.net >= 0 ? ', 남은 돈 ' + F.money(c.net) : ', 부족 ' + F.money(-c.net)) : '') + ' · 순자산 ' + F.money(D.bs.net) + '.' : '이 달에는 아직 수입 · 지출 기록이 없습니다 · 순자산 ' + F.money(D.bs.net) + '.'));
-  const row = (k, v) => '<div><dt>' + t(k) + '</dt><dd>' + v + '</dd></div>';
-  return '<div class="memo">'
-    + '<div class="mtop"><span class="logo">HL</span><span class="bn">Home Ledger</span><span class="conf">' + t('Private & confidential (개인 · 대외비)') + '</span></div>'
-    + '<h1>' + biHead('Memorandum (메모)') + '</h1>'
-    + '<dl class="mh">'
-    + row('To (받는 사람)', esc(D.household))
-    + row('From (보낸 곳)', t('Home Ledger, household books (우리집 장부)'))
-    + row('Date (날짜)', esc(dateLong(D.today)))
-    + row('Re (제목)', biHead('Monthly financial report (월간 재무 보고서)') + ' — ' + periodTitle(D.ym))
+  // 보고서 표지: 제목 · 기간 · 핵심 정보 · 차례 (한 쪽 위쪽에 짧게)
+  const fact = (k, v) => '<div><dt>' + t(k) + '</dt><dd>' + v + '</dd></div>';
+  return '<header class="cover">'
+    + '<div class="ctop"><span class="logo">HL</span><span class="bn">Home Ledger</span><span class="conf">' + t('Private & confidential (개인 · 대외비)') + '</span></div>'
+    + '<h1>' + biHead('Monthly Financial Report (월간 재무 보고서)') + '</h1>'
+    + '<div class="period">' + periodTitle(D.ym) + '</div>'
+    + '<dl class="facts-row">'
+    + fact('Household (가구)', esc(D.household))
+    + fact('Reporting period (보고 기간)', esc(dateNum(D.ym + '-01')) + ' – ' + esc(dateNum(D.bs.asOf)))
+    + fact('Prepared (작성일)', esc(dateLong(D.today)))
+    + fact('Currency (통화)', 'CAD' + (F.whole ? ' · ' + t('whole dollars (달러 단위)') : ''))
     + '</dl>'
-    + '<p class="purpose">' + purpose + '</p>'
-    + '<div class="contents"><span class="cl">' + t('Contents (차례)') + '</span><ol>' + sections.map((s) => '<li>' + t(s.title) + '</li>').join('') + '</ol>'
-    + '<span class="basis">' + t('CAD (캐나다 달러)') + (F.whole ? ' · ' + t('whole dollars (달러 단위)') : '') + ' · ' + t('Period (기간)') + ' ' + esc(dateNum(D.ym + '-01')) + ' – ' + esc(dateNum(D.bs.asOf)) + '</span></div>'
-    + '</div>';
+    + (sections.length > 1 ? '<div class="contents"><span class="cl">' + t('Contents (차례)') + '</span><ol>' + sections.map((x) => '<li>' + t(x.title) + '</li>').join('') + '</ol></div>' : '')
+    + '</header>';
 }
 
 function observations(D, F) {
@@ -570,11 +563,11 @@ function notesSec(D) {
 // ───────── 스타일 ─────────
 const CSS = (footL) => `
 @page { size: letter; margin: 0.55in 0.6in 0.62in;
-  @bottom-left { content: "${footL}"; font: 7pt -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; color: #6a737d; vertical-align: top; padding-top: 6pt; }
-  @bottom-right { content: counter(page) " / " counter(pages); font: 7pt -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; color: #6a737d; vertical-align: top; padding-top: 6pt; }
+  @bottom-left { content: "${footL}"; font: 7pt "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; color: #6a737d; vertical-align: top; padding-top: 6pt; }
+  @bottom-right { content: counter(page) " / " counter(pages); font: 7pt "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; color: #6a737d; vertical-align: top; padding-top: 6pt; }
 }
-.hlr { --g: #007a33; --g2: #00561f; --gl: #e8f3ea; --ink: #1d232a; --mu: #5f6b76; --rule: #cfd6dc; --rule2: #e6eaee; --good: #18794e; --bad: #c0362c; --warn: #b7791f; --fill: #f5f7f8; --serif: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, "Noto Serif KR", "AppleMyungjo", serif;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", Roboto, Helvetica, Arial, sans-serif;
+.hlr { --g: #007a33; --g2: #00561f; --gl: #e8f3ea; --ink: #1d232a; --mu: #5f6b76; --rule: #cfd6dc; --rule2: #e6eaee; --good: #18794e; --bad: #c0362c; --warn: #b7791f; --fill: #f5f7f8; --serif: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; letter-spacing: -0.005em;
   color: var(--ink); background: #fff; font-size: 8.6pt; line-height: 1.38; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-variant-numeric: tabular-nums lining-nums; }
 .hlr * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .hlr h1, .hlr h2, .hlr h3, .hlr p, .hlr ul, .hlr ol, .hlr dl, .hlr figure { margin: 0; padding: 0; }
@@ -583,31 +576,27 @@ const CSS = (footL) => `
 .hlr .good { color: var(--good); } .hlr .bad { color: var(--bad); } .hlr .warnc { color: var(--warn); }
 .hlr .na, .hlr .zero, .hlr .flat { color: #a3acb5; }
 .hlr .pp { visibility: hidden; }
-/* 메모 머리 */
-.hlr .memo { padding: 0 0 12pt; margin-bottom: 14pt; border-bottom: 1.2pt solid var(--ink); }
-.hlr .mtop { display: flex; align-items: center; gap: 7pt; font-size: 8pt; color: var(--g2); font-weight: 700; padding-bottom: 8pt; border-bottom: .75pt solid var(--rule); }
+/* 표지 */
+.hlr .cover { padding-bottom: 12pt; margin-bottom: 14pt; border-bottom: 1.2pt solid var(--ink); break-inside: avoid; }
+.hlr .ctop { display: flex; align-items: center; gap: 7pt; font-size: 8pt; color: var(--g2); font-weight: 700; padding-bottom: 8pt; border-bottom: .75pt solid var(--rule); }
 .hlr .logo { display: inline-grid; place-items: center; width: 17pt; height: 17pt; border-radius: 3pt; background: var(--g); color: #fff; font-size: 7.4pt; }
 .hlr .conf { margin-left: auto; font-weight: 600; color: var(--mu); font-size: 7.4pt; }
-.hlr h1 { font-family: var(--serif); font-size: 24pt; line-height: 1.1; font-weight: 600; color: #111; margin: 16pt 0 10pt; letter-spacing: -.005em; }
-.hlr .mh { display: grid; grid-template-columns: auto 1fr; column-gap: 14pt; row-gap: 3pt; font-size: 9.6pt; }
-.hlr .mh div { display: contents; }
-.hlr .mh dt { font-weight: 700; color: var(--ink); }
-.hlr .mh dd { margin: 0; }
-.hlr .mh .hk { font-size: .8em; }
-.hlr .purpose { font-family: var(--serif); font-size: 10pt; line-height: 1.55; margin-top: 12pt; padding-top: 10pt; border-top: .75pt solid var(--rule); max-width: 6.4in; }
-.hlr .purpose .ko { display: block; margin-top: 3pt; font-size: .9em; }
-.hlr .contents { margin-top: 10pt; font-size: 8pt; color: var(--mu); }
-.hlr .contents .cl { font-weight: 700; color: var(--ink); margin-right: 6pt; }
-.hlr .contents ol { display: inline; list-style: none; counter-reset: c; }
-.hlr .contents li { display: inline; counter-increment: c; margin-right: 9pt; white-space: nowrap; }
+.hlr h1 { font-size: 22pt; line-height: 1.15; font-weight: 700; color: #111; margin: 16pt 0 2pt; letter-spacing: -.02em; }
+.hlr .period { font-size: 13pt; color: var(--g); font-weight: 600; }
+.hlr .facts-row { display: grid; grid-template-columns: repeat(4, auto); justify-content: start; gap: 4pt 26pt; margin-top: 12pt; }
+.hlr .facts-row dt { font-size: 7.2pt; color: var(--mu); font-weight: 500; }
+.hlr .facts-row dd { margin: 1pt 0 0; font-weight: 600; font-size: 8.8pt; }
+.hlr .contents { margin-top: 10pt; font-size: 8pt; color: var(--mu); display: flex; align-items: baseline; gap: 8pt; }
+.hlr .contents .cl { font-weight: 700; color: var(--ink); white-space: nowrap; flex: none; }
+.hlr .contents ol { display: flex; flex-wrap: wrap; gap: 2pt 10pt; list-style: none; counter-reset: c; min-width: 0; }
+.hlr .contents li { counter-increment: c; white-space: nowrap; }
 .hlr .contents li:before { content: counter(c) ". "; color: var(--g2); font-weight: 700; }
-.hlr .contents .basis { display: block; margin-top: 3pt; }
 /* 섹션 */
 .hlr .sec { margin-top: 16pt; }
 .hlr .sec.pb { break-before: page; page-break-before: always; margin-top: 0; }
-.hlr .sh { display: flex; align-items: baseline; gap: 6pt; border-bottom: .75pt solid var(--ink); padding-bottom: 3.5pt; margin-bottom: 8pt; break-after: avoid; page-break-after: avoid; }
-.hlr .sn { font-family: var(--serif); font-size: 13.5pt; font-weight: 600; color: var(--g2); }
-.hlr h2 { font-family: var(--serif); font-size: 13.5pt; font-weight: 600; letter-spacing: 0; }
+.hlr .sh { display: flex; align-items: baseline; gap: 6pt; border-bottom: 1.2pt solid var(--g); padding-bottom: 3.5pt; margin-bottom: 8pt; break-after: avoid; page-break-after: avoid; }
+.hlr .sn { font-size: 12.5pt; font-weight: 700; color: var(--g); }
+.hlr h2 { font-size: 12.5pt; font-weight: 700; letter-spacing: -.01em; }
 .hlr .ss { margin-left: auto; font-size: 7.4pt; color: var(--mu); }
 .hlr h3 { font-size: 8.4pt; font-weight: 700; letter-spacing: 0; color: var(--g2); margin: 10pt 0 5pt; break-after: avoid; page-break-after: avoid; }
 /* KPI */
@@ -620,10 +609,9 @@ const CSS = (footL) => `
 .hlr .kv small { font-size: 8pt; color: var(--mu); font-weight: 600; margin-left: 2pt; }
 .hlr .ks { font-size: 7.2pt; color: var(--mu); margin-top: 2pt; }
 .hlr .chg { font-weight: 600; white-space: nowrap; }
-.hlr .headline { margin-top: 9pt; padding: 7pt 10pt; background: var(--fill); font-family: var(--serif); font-size: 9.4pt; break-inside: avoid; }
+.hlr .headline { margin-top: 9pt; padding: 7pt 10pt; background: var(--fill); font-size: 9pt; break-inside: avoid; }
 .hlr .two { display: grid; grid-template-columns: 1.08fr 1fr; gap: 16pt; margin-top: 2pt; }
 .hlr .obs ul, .hlr .tips ul { list-style: none; }
-.hlr .obs li { font-family: var(--serif); font-size: 9pt; }
 .hlr .obs li, .hlr .tips li { position: relative; padding: 2.6pt 0 2.6pt 11pt; border-bottom: .5pt solid var(--rule2); break-inside: avoid; }
 .hlr .obs li:before, .hlr .tips li:before { content: ""; position: absolute; left: 0; top: 6.4pt; width: 5pt; height: 5pt; border-radius: 50%; background: #9aa5b1; }
 .hlr li.o-good:before { background: var(--good); } .hlr li.o-bad:before { background: var(--bad); } .hlr li.o-warn:before { background: var(--warn); } .hlr li.o-n:before { background: var(--g); }
@@ -712,10 +700,20 @@ const CSS = (footL) => `
 .hlr .disc .ko { display: inline; margin-left: 3pt; }
 .hlr .disc .gen { margin-top: 6pt; font-size: 6.8pt; }
 .hlr .keep { break-inside: avoid; }
+/* 쪽 나눔: 차트 · 숫자 타일 · 표 줄 · 메모 · 목록 줄은 절대 쪼개지 않고, 제목은 다음 내용과 같은 쪽에 */
+.hlr .fig, .hlr figure, .hlr svg, .hlr .kpis, .hlr .kpi, .hlr .mix, .hlr .facts, .hlr .payoff, .hlr .note, .hlr .headline,
+.hlr .obs li, .hlr .tips li, .hlr table.mini, .hlr .health, .hlr .disc, .hlr .ft tr, .hlr .porder li, .hlr .cover { break-inside: avoid; page-break-inside: avoid; }
+.hlr h2, .hlr h3, .hlr .sh, .hlr figcaption, .hlr .ft thead { break-after: avoid; page-break-after: avoid; }
+.hlr .sh + *, .hlr h3 + *, .hlr figcaption + * { break-before: avoid; page-break-before: avoid; }
+.hlr .sec { orphans: 3; widows: 3; }
+.hlr p, .hlr li { orphans: 2; widows: 2; }
+/* 표 머리글은 다음 쪽에서도 다시 */
+.hlr .ft thead { display: table-header-group; }
 @media screen { .hlr { max-width: 7.3in; margin: 24px auto; } }
 `;
 
 // ───────── 조립 ─────────
+export const PRETENDARD_CSS = 'https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css';
 const SECTIONS = {
   trend: { title: 'Performance trends — 12 months (12개월 추이)', fn: trendSec },
   is: { title: 'Income statement (손익계산서)', fn: incomeStatementSec },
@@ -731,30 +729,33 @@ export function buildReportHtml(api, opts) {
   opts = opts || {};
   const D = collect(api, opts);
   const F = makeFmt(rounded());
-  let order = ['trend', 'is', 'bs', 'budget', 'debt', 'vendors', 'notes'];
+  const want = Array.isArray(opts.sections) && opts.sections.length ? new Set(opts.sections) : null;
+  let order = ['trend', 'is', 'bs', 'budget', 'debt', 'vendors', 'notes'].filter((k) => !want || want.has(k));
+  const withExec = !want || want.has('exec');
   const focus = TAB_FOCUS[opts.tab];
   if (focus) order = [focus].concat(order.filter((k) => k !== focus));
   // 큰 섹션은 새 쪽에서 시작 (작은 섹션은 이어서)
   // 기록이 거의 없으면(새 사용자) 쪽 나눔 없이 이어서
   const breakers = D.items.length >= 15 ? new Set(['is', 'bs']) : new Set();
-  const secs = [{ id: 'exec', title: 'Executive summary (요약)' }].concat(order.map((k) => ({ id: k, title: SECTIONS[k].title })));
+  const secs = (withExec ? [{ id: 'exec', title: 'Executive summary (요약)' }] : []).concat(order.map((k) => ({ id: k, title: SECTIONS[k].title })));
   let body = coverBlock(D, F, secs);
-  body += section('exec', 1, 'Executive summary (요약)', esc(monthLong(D.ym)) + ' · ' + t('vs prior month (전월 대비)'), execSummary(D, F), 'first');
+  if (withExec) body += section('exec', 1, 'Executive summary (요약)', esc(monthLong(D.ym)) + ' · ' + t('vs prior month (전월 대비)'), execSummary(D, F), 'first');
+  const base = withExec ? 2 : 1;
   order.forEach((k, i) => {
-    const cls = ((i === 0 && D.items.length >= 15) || breakers.has(k)) ? 'pb' : '';
+    const cls = ((i === 0 && withExec && D.items.length >= 15) || breakers.has(k)) ? 'pb' : '';
     let sub = '';
     if (k === 'is') sub = t('CAD, for the month and year to date (월간 · 연간 누계)');
     else if (k === 'bs') sub = t('As at month-end (월말 기준)') + ' · ' + esc(dateLong(D.bs.asOf));
     else if (k === 'trend') sub = esc(monthShort(D.ms12[0])) + ' – ' + esc(monthShort(D.ym));
     else if (k === 'budget') sub = esc(monthLong(D.ym));
     else if (k === 'debt') sub = t('As at month-end (월말 기준)');
-    body += section(k, i + 2, SECTIONS[k].title, sub, SECTIONS[k].fn(D, F), cls + (focus === k ? ' focus' : ''));
+    body += section(k, i + base, SECTIONS[k].title, sub, SECTIONS[k].fn(D, F), cls + (focus === k ? ' focus' : ''));
   });
   const footL = ('Home Ledger · ' + tr('Monthly Financial Report (월간 재무 보고서)') + ' · ' + monthShort(D.ym) + ' · ' + tr('Private & confidential (대외비)')).replace(/["\\]/g, '');
   const title = 'Home Ledger Report ' + D.ym;
   const lg = lang() === 'en' ? 'en' : 'ko';
   return '<!doctype html><html lang="' + lg + '"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' + esc(title) + '</title>'
-    + '<style>' + CSS(footL) + 'html,body{margin:0;padding:0;background:#fff;}</style></head><body><div class="hlr" data-month="' + esc(D.ym) + '">' + body + '</div></body></html>';
+    + '<link rel="stylesheet" href="' + PRETENDARD_CSS + '">' + '<style>' + CSS(footL) + 'html,body{margin:0;padding:0;background:#fff;}</style></head><body><div class="hlr" data-month="' + esc(D.ym) + '">' + body + '</div></body></html>';
 }
 
 /** 인쇄용 CSS 와 본문만 (iOS 처럼 iframe 인쇄가 불안정한 곳에서 현재 문서에 넣어 인쇄할 때) */
@@ -776,7 +777,7 @@ let cleanup = null;
  * 종합 보고서를 만들어 인쇄(PDF 미리보기)를 엽니다.
  * opts: { tab, month, mode: 'iframe' | 'inline' }  (mode 를 안 주면 iOS 는 inline, 나머지는 iframe)
  */
-export function openPrintReport(api, opts) {
+export function printReportNow(api, opts) {
   opts = opts || {};
   const toast = (m) => { try { if (api && typeof api.toast === 'function') api.toast(m); } catch (e) { /* ignore */ } };
   if (cleanup) { try { cleanup(); } catch (e) { /* ignore */ } cleanup = null; }
@@ -847,7 +848,7 @@ export function openPrintReport(api, opts) {
         resolve(true);
       };
       const ready = fd.fonts && fd.fonts.ready ? fd.fonts.ready : Promise.resolve();
-      Promise.race([ready, new Promise((r) => setTimeout(r, 600))]).then(() => {
+      Promise.race([ready, new Promise((r) => setTimeout(r, 2500))]).then(() => {
         (w.requestAnimationFrame || setTimeout)(() => (w.requestAnimationFrame || setTimeout)(go));
       });
     } catch (e) {
@@ -857,4 +858,72 @@ export function openPrintReport(api, opts) {
       resolve(false);
     }
   });
+}
+
+// ───────── 무엇을 넣을지 고르기 (인쇄 버튼) ─────────
+export const PRINT_PARTS = [
+  ['exec', 'Executive summary (요약)'],
+  ['trend', 'Performance trends — 12 months (12개월 추이)'],
+  ['is', 'Income statement (손익계산서)'],
+  ['bs', 'Balance sheet (재무상태표)'],
+  ['budget', 'Budget vs actual (예산 대비 실적)'],
+  ['debt', 'Debt & payoff (부채 · 상환)'],
+  ['vendors', 'Merchants & people (업체 · 사람별)'],
+  ['notes', 'Notes (메모 · 고지)']
+];
+const PARTS_KEY = 'hl_print_parts';
+export function savedParts() {
+  try { const v = JSON.parse(localStorage.getItem(PARTS_KEY) || 'null'); if (Array.isArray(v) && v.length) return v.filter((k) => PRINT_PARTS.some((p) => p[0] === k)); } catch (e) { /* ignore */ }
+  return PRINT_PARTS.map((p) => p[0]);
+}
+
+/** 인쇄 버튼: 넣을 내용과 달을 고르는 창 → "PDF 만들기" 로 인쇄 미리보기 */
+export function openPrintReport(api, opts) {
+  opts = opts || {};
+  const h = api && api.h;
+  const ov = typeof document !== 'undefined' ? document.getElementById('overlay') : null;
+  if (!h || !ov) return printReportNow(api, opts);
+  const picked = new Set(savedParts());
+  const cur = opts.month || (api.state && api.state.month) || L.monthOf(L.todayStr());
+  // 이번 달부터 18개월 전까지 고를 수 있게
+  const months = [];
+  let [yy, mm] = ymParts(L.monthOf(L.todayStr()));
+  for (let i = 0; i < 18; i++) { months.push(yy + '-' + String(mm).padStart(2, '0')); mm--; if (!mm) { mm = 12; yy--; } }
+  if (months.indexOf(cur) < 0) months.unshift(cur);
+  let month = cur;
+  const close = () => { ov.hidden = true; ov.replaceChildren(); document.body.classList.remove('noscroll'); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const count = h('span', { id: 'pr-count' });
+  const go = h('button', { type: 'button', class: 'btn', id: 'pr-go' }, 'Make PDF (PDF 만들기)');
+  const refresh = () => { count.textContent = picked.size + ' / ' + PRINT_PARTS.length + ' ' + tr('sections (항목)'); go.disabled = !picked.size; };
+  const box = (k, label) => h('label', { class: 'pr-opt' },
+    h('input', { type: 'checkbox', checked: picked.has(k), 'data-part': k, onchange: (e) => { if (e.target.checked) picked.add(k); else picked.delete(k); refresh(); } }),
+    h('span', null, tr(label)));
+  const list = h('div', { class: 'pr-list', id: 'pr-list' }, PRINT_PARTS.map((p) => box(p[0], p[1])));
+  const all = (on) => { list.querySelectorAll('input[type=checkbox]').forEach((c) => { c.checked = on; if (on) picked.add(c.getAttribute('data-part')); else picked.delete(c.getAttribute('data-part')); }); refresh(); };
+  const sel = h('select', { id: 'pr-month', onchange: (e) => { month = e.target.value; } }, months.map((ym) => h('option', { value: ym, selected: ym === cur }, monthLong(ym))));
+  go.addEventListener('click', () => {
+    const parts = PRINT_PARTS.map((p) => p[0]).filter((k) => picked.has(k));
+    try { localStorage.setItem(PARTS_KEY, JSON.stringify(parts)); } catch (e) { /* ignore */ }
+    close();
+    printReportNow(api, Object.assign({}, opts, { month, sections: parts }));
+  });
+  const sheetEl = h('div', { class: 'sheet pr-sheet', role: 'dialog', 'aria-label': tr('Print report (보고서 인쇄)') },
+    h('div', { class: 'sheet-head' }, h('h2', null, tr('Print report (보고서 인쇄)')),
+      h('button', { type: 'button', class: 'icon', 'aria-label': 'Close (닫기)', onclick: close }, '✕')),
+    h('p', { class: 'hint' }, tr('Choose what to include. Your choice is remembered for next time (넣을 내용을 고르세요. 다음에도 기억해요).')),
+    h('label', { class: 'field' }, h('span', { class: 'lbl' }, tr('Month (달)')), sel),
+    h('div', { class: 'pr-tools' }, count,
+      h('button', { type: 'button', class: 'linkbtn', onclick: () => all(true) }, tr('Select all (모두)')),
+      h('button', { type: 'button', class: 'linkbtn', onclick: () => all(false) }, tr('Clear (비우기)'))),
+    list,
+    h('div', { class: 'btnrow' }, go, h('button', { type: 'button', class: 'btn secondary', onclick: close }, tr('Cancel (취소)'))));
+  const bd = h('div', { class: 'backdrop', onclick: (e) => { if (e.target === bd) close(); } }, sheetEl);
+  ov.hidden = false;
+  document.body.classList.add('noscroll');
+  document.addEventListener('keydown', onKey, true);
+  ov.replaceChildren(bd);
+  refresh();
+  try { go.focus(); } catch (e) { /* ignore */ }
+  return Promise.resolve(true);
 }

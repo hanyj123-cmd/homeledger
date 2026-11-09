@@ -91,7 +91,7 @@ const PRECACHE = [
   './js/ui.js'
 ];
 
-const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
+const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'cdn.jsdelivr.net'];   // jsdelivr = Pretendard 글꼴 (버전 고정 주소라 오래 보관해도 안전)
 const STATIC_EXT = /\.(?:js|mjs|css|png|jpe?g|webp|svg|ico|webmanifest|woff2?)$/i;
 
 const ORIGIN = self.location.origin;

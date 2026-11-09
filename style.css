@@ -3,7 +3,7 @@
    폰 / 아이패드 / 컴퓨터는 html[data-layout] 로 나뉩니다 (js/layout.js). */
 
 :root {
-  --font: "Figtree", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  --font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", system-ui, sans-serif;
   --bg: #f6f6f4;
   --surface: #ffffff;
   --surface-2: #f0f0ec;
@@ -2477,3 +2477,12 @@ html[data-layout="phone"] .row-split.on .rs-t, html:not([data-layout]) .row-spli
 .stmt .row-split { padding: 0 8px; }
 .stmt .row-split .rs-t { display: none; }
 .stmt .row-split.on .rs-t { display: inline; }
+
+/* 인쇄 내용 고르기 창 */
+.pr-sheet .field { margin-top: 8px; }
+.pr-tools { display: flex; align-items: center; gap: 12px; margin: 14px 0 6px; color: var(--muted); font-size: 0.9rem; }
+.pr-tools #pr-count { margin-right: auto; }
+.pr-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px; }
+.pr-opt { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface); cursor: pointer; }
+.pr-opt input { width: 20px; height: 20px; accent-color: var(--green); flex: none; }
+.pr-opt:has(input:checked) { background: var(--tint); border-color: var(--tint-line); }
