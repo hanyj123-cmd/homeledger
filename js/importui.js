@@ -11,11 +11,22 @@ import * as R from './receipts.js';
 // 화면이 바뀌어도 작업 중이던 내용을 유지합니다.
 const S = {
   accountId: '', fileName: '', kind: '', rows: [], profile: null, profileFrom: '', promptYear: String(new Date().getFullYear()),
-  parsed: null, preview: [], busy: false, error: '', libs: null, done: null, aiBusy: false, aiMsg: '', imgRaw: [], imgFlip: false, reading: ''
+  parsed: null, preview: [], busy: false, error: '', libs: null, done: null, aiBusy: false, aiMsg: '', imgRaw: [], imgFlip: false, reading: '',
+  pending: null   // 거래 탭의 Screenshot 버튼에서 넘어온, 아직 안 읽은 스크린샷
 };
 
+const SHOT_ACCT_KEY = 'hl_shot_acct';   // 마지막으로 스크린샷을 가져온 계좌 (다음엔 바로 읽기)
+const lastShotAcct = () => { try { return localStorage.getItem(SHOT_ACCT_KEY) || ''; } catch (e) { return ''; } };
+
+/** 거래 탭에서 고른 스크린샷을 가져오기 화면으로 넘깁니다. 계좌를 알면 바로 읽기 시작 */
+export function queueShots(files, accountId) {
+  reset();
+  S.pending = Array.from(files || []);
+  S.accountId = String(accountId || S.accountId || lastShotAcct() || '');
+}
+
 export function reset() {
-  Object.assign(S, { fileName: '', kind: '', rows: [], profile: null, profileFrom: '', parsed: null, preview: [], busy: false, error: '', done: null, aiBusy: false, aiMsg: '', imgRaw: [], imgFlip: false, reading: '' });
+  Object.assign(S, { fileName: '', kind: '', rows: [], profile: null, profileFrom: '', parsed: null, preview: [], busy: false, error: '', done: null, aiBusy: false, aiMsg: '', imgRaw: [], imgFlip: false, reading: '', pending: null });
 }
 
 export function resetIfDone() { if (S.done) reset(); }
@@ -27,7 +38,9 @@ export function _state() { return S; }
 export function render(api) {
   const { h, fmt } = api;
   const root = h('div', { id: 'import-root' });
+  if (S.pending && S.accountId && !api.accMap.has(String(S.accountId))) S.accountId = '';
   draw();
+  if (S.pending && S.accountId) { const fs = S.pending; S.pending = null; onImages(fs); }
   return root;
 
   function draw() {
@@ -46,7 +59,7 @@ export function render(api) {
     const money = moneyAccounts();
     const opt = (a) => h('option', { value: a.account_id, selected: String(a.account_id) === String(S.accountId) }, Lg.accLabel(a));
     const sel = h('select', {
-      id: 'imp-acct', onchange: (e) => { S.accountId = e.target.value; if (S.rows.length) loadProfileAndParse(); else if (S.kind === 'IMAGE' && S.imgRaw.length) reparse(); else draw(); }
+      id: 'imp-acct', onchange: (e) => { S.accountId = e.target.value; if (S.pending && S.accountId) { const fs = S.pending; S.pending = null; onImages(fs); return; } if (S.rows.length) loadProfileAndParse(); else if (S.kind === 'IMAGE' && S.imgRaw.length) reparse(); else draw(); }
     },
     h('option', { value: '' }, 'Select account… (계좌 선택)'),
     h('optgroup', { label: 'Assets (자산)' }, money.filter((a) => a.type === 'ASSET').map(opt)),
@@ -58,6 +71,7 @@ export function render(api) {
     return h('div', { class: 'card' },
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Account (이 명세서의 계좌)'), sel),
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'File (파일: CSV · XLSX · PDF · 스크린샷)'), file),
+      S.pending ? h('div', { class: 'note', id: 'imp-pending', role: 'status' }, S.pending.length + ' screenshot(s) ready — choose the account and they are read right away (스크린샷 ' + S.pending.length + '장 준비됨 — 계좌를 고르면 바로 읽어요)') : null,
       S.reading ? h('div', { class: 'note', id: 'imp-reading', role: 'status' }, S.reading) : null,
       S.fileName ? h('div', { class: 'muted small' }, S.fileName + ' · ' + S.kind + (S.kind === 'IMAGE' ? ' — read by AI: check every line (AI 가 읽었어요. 모든 줄을 꼭 확인하세요)' : '') + (S.kind === 'PDF' ? ' — best-effort: check every line (PDF는 시도형입니다. 모든 줄을 꼭 확인하세요)' : '')) : null,
       h('div', { class: 'muted small' }, 'CSV · XLSX · PDF are read on this device only (CSV · XLSX · PDF 는 이 기기에서만 읽습니다). Screenshots are sent to the AI model to be read (스크린샷은 읽기 위해 AI 모델로 전송됩니다).'));
@@ -81,6 +95,7 @@ export function render(api) {
       S.reading = 'Reading ' + files.length + ' screenshot(s) with AI… (AI 가 읽는 중 — 잠시만요)'; draw();
       const res = await Promise.all(prepared.map((p) => R.parseStatementImage(p)));
       S.imgRaw = res.map((r) => ({ lines: Array.isArray(r.lines) ? r.lines : [] }));
+      try { localStorage.setItem(SHOT_ACCT_KEY, String(S.accountId)); } catch (e) { /* ignore */ }
       S.fileName = files.map((f) => f.name).join(', '); S.kind = 'IMAGE';
       S.reading = '';
       if (!S.imgRaw.some((r) => r.lines.length)) { S.error = 'No transactions could be read (읽힌 거래가 없습니다). Try a sharper, uncropped screenshot (더 선명하고 잘리지 않은 화면으로 다시).'; S.parsed = null; draw(); return; }

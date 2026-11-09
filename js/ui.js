@@ -324,6 +324,7 @@ function renderTxns() {
     openScan: () => receiptui.openScan(receiptApi()),
     viewReceipt: (id) => RV.viewTxnReceipt(receiptApi(), id),
     goImport: () => { state.tab = 'import'; importui.resetIfDone(); drill.close(); renderAll(); },
+    goImportShots: (files, acctId) => { importui.queueShots(files, acctId); state.tab = 'import'; drill.close(); renderAll(); },
     drillApi
   }));
   xferNotice(v);

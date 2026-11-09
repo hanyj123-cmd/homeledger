@@ -189,6 +189,7 @@ export function render(api) {
   // ── 알약 버튼
   frag.append(h('div', { class: 'pills' },
     h('button', { type: 'button', class: 'pillbtn', id: 'add-btn', onclick: () => api.openForm(null, acct ? { fromId: String(acct.account_id) } : {}) }, icon('plus', 24), 'New ', h('span', { class: 'ko' }, '거래 추가')),
+    api.goImportShots ? shotPill() : null,
     h('button', { type: 'button', class: 'pillbtn', id: 'scan-btn', onclick: () => api.openScan() }, icon('scan', 24), 'Receipt ', h('span', { class: 'ko' }, '영수증')),
     h('button', { type: 'button', class: 'pillbtn', id: 'xfer-btn', onclick: () => api.openForm(null, { kind: 'TRANSFER', fromId: acct ? String(acct.account_id) : '' }) }, icon('transfer', 24), 'Transfer ', h('span', { class: 'ko' }, '이체')),
     h('button', { type: 'button', class: 'pillbtn', id: 'imp-btn', onclick: () => api.goImport() }, icon('import', 24), 'Import ', h('span', { class: 'ko' }, '가져오기'))));
@@ -403,6 +404,17 @@ export function render(api) {
       class: 'row-split' + (done ? ' on' : ''), role: 'button', tabindex: bk.on ? '-1' : '0', 'data-split': it.txn.txn_id,
       'aria-label': done ? 'Edit split (나눈 줄 고치기)' : 'Split (나누기)', title: done ? 'Edit split (나눈 줄 고치기)' : 'Split by receipt items or people (영수증 · 사람별로 나누기)'
     }, tapKeys(() => splitTxn(api, it))), icon('split', 16), h('span', { class: 'rs-t' }, done ? 'Split ' + it.desc.split + ' (나눔)' : 'Split (나누기)'));
+  }
+
+  // 뱅크앱 스크린샷 바로 가져오기: 사진을 고르면 가져오기 화면에서 AI 가 읽고 미리보기 (보고 있는 계좌가 있으면 그 계좌로)
+  function shotPill() {
+    const cur = state.acct ? d.accMap.get(String(state.acct)) : null;
+    const pick = h('input', {
+      type: 'file', accept: 'image/*', multiple: true, hidden: true, id: 'shot-in',
+      onchange: (e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) api.goImportShots(fs, cur && L.isMoneyAccount(cur) ? String(cur.account_id) : ''); }
+    });
+    return h('button', { type: 'button', class: 'pillbtn', id: 'shot-btn', title: 'Import from bank-app screenshots (뱅크앱 스크린샷으로 가져오기)', onclick: () => pick.click() },
+      icon('phone', 24), 'Screenshot ', h('span', { class: 'ko' }, '뱅크앱 화면'), pick);
   }
 
   function rowTitle(text, id, cls) {
