@@ -3,15 +3,15 @@
    라이트/다크와 상관없이 같은 모양(밝은 글자 + 어두운 초록 바탕)이고, 다크에서는 조금 더 어둡습니다. */
 
 .lock {
-  --lk-a: #0e2d09;                        /* 배경 그라데이션 (어두운 쪽) */
-  --lk-b: #1c4c12;
-  --lk-c: #3b8a25;                        /* TD 초록 */
-  --lk-veil: rgba(9, 32, 7, 0.86);        /* 유리 위의 색 막 */
-  --lk-hi: #7be05a;                       /* 포인트(채워진 점, 포커스) */
+  --lk-a: #161816;                        /* 배경 그라데이션 (어두운 쪽) */
+  --lk-b: #161816;
+  --lk-c: #2f6b3c;
+  --lk-veil: #161816;        /* 유리 위의 색 막 */
+  --lk-hi: #a9d4b2;                       /* 포인트(채워진 점, 포커스) */
   --lk-pill: #ffffff;
-  --lk-pill-hover: #f0f8ec;
-  --lk-pill-down: #d7edcc;
-  --lk-pill-ink: #12300c;
+  --lk-pill-hover: #f1efe9;
+  --lk-pill-down: #e2ded5;
+  --lk-pill-ink: #1e1d1a;
   --lk-err: #ffb59c;
   --lk-fn-bg: rgba(255, 255, 255, 0.13);
   --lk-fn-line: rgba(255, 255, 255, 0.28);
@@ -28,19 +28,8 @@
   -webkit-user-select: none; user-select: none;
   -webkit-tap-highlight-color: transparent;
   /* 유리를 못 쓰는 브라우저: 뒤가 비치지 않는 불투명 초록 */
-  background:
-    radial-gradient(120% 70% at 50% -10%, rgba(59, 138, 37, 0.7), transparent 62%),
-    linear-gradient(165deg, var(--lk-b) 0%, var(--lk-a) 70%);
+  background: var(--lk-a);
   animation: lock-in 0.22s ease-out both;
-}
-@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .lock {
-    background:
-      radial-gradient(120% 70% at 50% -10%, rgba(59, 138, 37, 0.55), transparent 62%),
-      var(--lk-veil);
-    -webkit-backdrop-filter: blur(28px) saturate(150%);
-    backdrop-filter: blur(28px) saturate(150%);
-  }
 }
 .lock:focus { outline: none; }
 .lock.is-out { animation: lock-out 0.18s ease-in both; pointer-events: none; }
@@ -48,7 +37,7 @@
 html.hl-locked, html.hl-locked body { overflow: hidden; }
 
 /* 배경에서 천천히 떠다니는 빛 번짐 */
-.lock-glow { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.lock-glow { display: none; position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .lock-glow::before, .lock-glow::after {
   content: ""; position: absolute; border-radius: 50%; filter: blur(60px); opacity: 0.55;
 }
@@ -70,7 +59,7 @@ html.hl-locked, html.hl-locked body { overflow: hidden; }
   display: grid; place-items: center; line-height: 0;
   background: #fff; color: var(--lk-a); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35);
 }
-.lock-title { margin: 16px 0 0; font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.lock-title { margin: 16px 0 0; font-size: 1.45rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; }
 .lock-sub { margin: 6px 0 0; font-size: 0.95rem; font-weight: 500; color: rgba(255, 255, 255, 0.82); }
 
 /* ── 점 표시 */
@@ -97,7 +86,7 @@ html.hl-locked, html.hl-locked body { overflow: hidden; }
   display: flex; align-items: center; justify-content: center;
   height: clamp(50px, 9vh, 66px); padding: 0; border: 0; border-radius: 999px;
   background: var(--lk-pill); color: var(--lk-pill-ink);
-  font: inherit; font-size: 1.65rem; font-weight: 600; line-height: 1;
+  font: inherit; font-size: 1.65rem; font-weight: 500; line-height: 1;
   cursor: pointer; touch-action: manipulation;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) inset, 0 8px 16px -8px rgba(0, 0, 0, 0.55);
   transition: transform 0.08s ease-out, background-color 0.14s, box-shadow 0.14s, opacity 0.2s;
@@ -197,7 +186,7 @@ html.hl-locked, html.hl-locked body { overflow: hidden; }
   width: 100%; min-height: 54px; margin: 6px 0 14px; padding: 12px 18px; border-radius: 999px;
   border: 1px solid var(--lk-fn-line); background: var(--lk-fn-bg); color: #fff;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-  font: inherit; font-size: 1rem; font-weight: 600; cursor: pointer; touch-action: manipulation;
+  font: inherit; font-size: 1rem; font-weight: 500; cursor: pointer; touch-action: manipulation;
   transition: background-color 0.14s, transform 0.08s ease-out, opacity 0.2s;
 }
 .lock-bio:hover { background: rgba(255, 255, 255, 0.22); }

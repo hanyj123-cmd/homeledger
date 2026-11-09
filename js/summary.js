@@ -11,7 +11,7 @@ import * as T from './summary-text.js';
 import { icon } from './icons.js';
 import { openPrintReport } from './printreport.js';
 import { layoutOf } from './layout.js';
-import { barChart, lineChart, donut, hbars, waterfall, sparkline, compact } from './charts.js';
+import { barChart, lineChart, donut, hbars, waterfall, compact } from './charts.js';
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const mshort = (m) => MON[Number(m.slice(5, 7)) - 1];
@@ -187,21 +187,21 @@ export function render(api) {
     grid.append(health, parts);
     card.append(grid);
 
-    // KPI 타일 (12개월 스파크라인)
+    // 12개월 기준 타일 — 이번 달 숫자는 위 머리에 이미 있으니, 여기서는 지난 12개월의 흐름만 보여 줍니다
     const ser = ctx.series;
     const avgOf = (arr) => { const v = arr.filter((x) => x !== null && Number.isFinite(x)); return v.length ? sum(v) / v.length : null; };
-    const tile = (id, en, ko, val, chipEl, values, color, foot) => h('div', { class: 'sm-kpi', id }, h('div', { class: 'lab' }, lab(en, ko)), h('div', { class: 'val' }, val),
-      h('div', { class: 'row' }, chipEl || sp('chg flat', '—'), sparkline(values, { width: 104, height: 34, color, fill: true, last: true, label: en + ' trend, 12 months' })),
-      h('div', { class: 'avg' }, foot));
+    const tile = (id, en, ko, val, foot) => h('div', { class: 'sm-kpi', id }, h('div', { class: 'lab' }, lab(en, ko)), h('div', { class: 'val' }, val),
+      foot ? h('div', { class: 'avg' }, foot) : null);
     const incA = avgOf(ser.filter((s) => s.income > 0).map((s) => s.income));
     const expA = avgOf(ser.filter((s) => s.expense > 0).map((s) => s.expense));
     const rateA = avgOf(ser.map((s) => s.rate));
     const nwC = ctx.nwSeries[ctx.nwSeries.length - 1] - ctx.nwSeries[0];
+    const vsAvg = (v, a, good) => (v === null || a === null || !Number.isFinite(v) || !(v > 0)) ? null : ['This month (이번 달) ', money(v), ' ', chg(v - a, good)];
     card.append(h('div', { class: 'sm-kpis', id: 'sm-kpis' },
-      tile('sm-k-nw', 'Net worth', '순자산', money(ctx.bs.net), chg(nwD, true), ctx.nwSeries, 'var(--c2)', ['12-mo change (12개월 변화) ', chg(nwC, true)]),
-      tile('sm-k-in', 'Income', '수입', money(cur.income), hasPrev ? chg(cur.income - prev.income, true) : null, ser.map((s) => s.income), 'var(--c1)', '12-mo avg (12개월 평균) ' + (incA === null ? '—' : money(incA))),
-      tile('sm-k-out', 'Spending', '지출', money(cur.expense), hasPrev ? chg(cur.expense - prev.expense, false) : null, ser.map((s) => s.expense), 'var(--c4)', '12-mo avg (12개월 평균) ' + (expA === null ? '—' : money(expA))),
-      tile('sm-k-rate', 'Savings rate', '저축률', cur.rate === null ? '—' : r1(cur.rate) + '%', rateD !== null ? chg(rateD, true, '', 'pp') : null, ser.map((s) => s.rate), 'var(--c7)', '12-mo avg (12개월 평균) ' + (rateA === null ? '—' : Math.round(rateA * 10) / 10 + '%'))));
+      tile('sm-k-nw', 'Net worth · 12-mo change', '순자산 12개월 변화', chg(nwC, true), ['Now (현재) ', money(ctx.bs.net)]),
+      tile('sm-k-in', 'Income · 12-mo avg', '수입 12개월 평균', incA === null ? '—' : money(incA), vsAvg(cur.income, incA, true)),
+      tile('sm-k-out', 'Spending · 12-mo avg', '지출 12개월 평균', expA === null ? '—' : money(expA), vsAvg(cur.expense, expA, false)),
+      tile('sm-k-rate', 'Savings rate · 12-mo avg', '저축률 12개월 평균', rateA === null ? '—' : Math.round(rateA * 10) / 10 + '%', cur.rate === null ? null : ['This month (이번 달) ' + r1(cur.rate) + '%'])));
     return card;
   }
 

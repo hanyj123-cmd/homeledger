@@ -268,23 +268,24 @@ export function render(api) {
 
   // ── 배너
   const metrics = h('div', { class: 'metrics' });
+  const addM = (...xs) => metrics.append(...xs.filter(Boolean));   // null 칸은 건너뜀 (그대로 넣으면 화면에 "null" 글자가 찍힘)
   const metric = (lab, val, sub, id) => h('div', { class: 'metric' + (sub ? ' sub' : ''), id: id || null }, h('div', { class: 'metric-lab' }, lab), h('div', { class: 'metric-val' }, val));
   if (cmp) {
     const lab = scope === 'Y' ? 'YTD' : L.monthLabel(month);
-    metrics.append(
+    addM(
       metric('Net income · ' + lab + ' (순수입)', (cmp.net.cur < 0 ? '−' : '') + fmt(Math.abs(cmp.net.cur)), false, 'bn-net'),
       metric('Income (수입)', fmt(cmp.income.cur), true, 'bn-in'),
       metric('Spending (지출)', fmt(cmp.expense.cur), true, 'bn-out'),
       cmp.savingsRate !== null ? metric('Savings rate (저축률)', cmp.savingsRate + '%', true, 'bn-rate') : null);
   } else if (bs) {
     const dn = L.round(bs.net - bsPrev.net, 2);
-    metrics.append(
+    addM(
       metric('Net worth (순자산)', (bs.net < 0 ? '−' : '') + fmt(Math.abs(bs.net)), false, 'bn-net'),
       metric('Assets (자산)', fmt(bs.totalAssets), true),
       metric('Debts (부채)', fmt(bs.totalLiab), true),
       metric('vs last month (전월 대비)', (dn >= 0 ? '▲ ' : '▼ ') + fmt(Math.abs(dn)), true));
   } else if (bg) {
-    metrics.append(
+    addM(
       metric(bg.left >= 0 ? 'Left (남은 예산)' : 'Over (초과)', (bg.left < 0 ? '−' : '') + fmt(Math.abs(bg.left)), false, 'bn-net'),
       metric('Budget (예산)', fmt(bg.totalBudget), true),
       metric('Spent (지출)', fmt(bg.totalActual), true),
@@ -293,7 +294,7 @@ export function render(api) {
   else if (who) {
     const lab = scope === 'Y' ? 'YTD' : L.monthLabel(month);
     const top = who.rows[0];
-    metrics.append(
+    addM(
       metric('Net income · ' + lab + ' (순수입)', (who.net < 0 ? '−' : '') + fmt(Math.abs(who.net)), false, 'bn-net'),
       metric('Income (수입)', fmt(who.income), true, 'bn-in'),
       metric('Spending (지출)', fmt(who.expense), true, 'bn-out'),
@@ -301,7 +302,7 @@ export function render(api) {
   } else if (vend) {
     const lab = scope === 'Y' ? 'YTD' : L.monthLabel(month);
     const top = vend.rows[0];
-    metrics.append(
+    addM(
       metric('Vendor spending · ' + lab + ' (업체 지출)', fmt(vend.total), false, 'bn-net'),
       metric('Vendors (업체 수)', String(vend.count), true, 'bn-count'),
       top ? metric('Top vendor (1위)', top.name, true, 'bn-top') : null,

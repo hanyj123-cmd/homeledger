@@ -6,29 +6,29 @@
 /* ───────── chart palette ─────────
    c1 TD green · c2 midnight blue · c3 maple honey · c4 fireweed · c5 aged gold · c6 heather · c7 deep teal · c8 persimmon (warning) */
 :root {
-  --c1: #3b8a25; --c2: #3b5b72; --c3: #d99e14; --c4: #b24d87;
-  --c5: #78704f; --c6: #855991; --c7: #1f7a6b; --c8: #e66523;
-  --ch-pos: #3b8a25;       /* waterfall up */
-  --ch-neg: #c2412a;       /* waterfall down */
+  --c1: #3f7d4a; --c2: #56697a; --c3: #b58a3a; --c4: #a65a7c;
+  --c5: #8a7b55; --c6: #725f8a; --c7: #3e7d74; --c8: #c56a2c;
+  --ch-pos: #3f7d4a;       /* waterfall up */
+  --ch-neg: #b0482f;       /* waterfall down */
   --ch-total: var(--c2);   /* waterfall totals */
   --ch-ok: var(--c1);
-  --ch-near: #d99e14;
-  --ch-over: #b8341b;
-  --ch-other: #a3aaa0;
-  --ch-tip-shadow: 0 1px 2px rgba(20, 40, 15, 0.08), 0 12px 28px -8px rgba(20, 40, 15, 0.30);
+  --ch-near: #b58a3a;
+  --ch-over: #a3361f;
+  --ch-other: #b4afa5;
+  --ch-tip-shadow: 0 1px 2px rgba(30, 26, 18, 0.06), 0 10px 24px -10px rgba(30, 26, 18, 0.22);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --c1: #5fd63a; --c2: #6f9bb8; --c3: #e5ab2d; --c4: #d77fb0;
-    --c5: #b3a97a; --c6: #b58cc4; --c7: #4fb8a3; --c8: #f08a52;
-    --ch-pos: #5fd63a; --ch-neg: #ff8a68; --ch-near: #e5ab2d; --ch-over: #ff7a55; --ch-other: #5d675a;
+    --c1: #8cc298; --c2: #8aa0b2; --c3: #d1ad6b; --c4: #cf8aaa;
+    --c5: #b9ab84; --c6: #a898c2; --c7: #7fb5ab; --c8: #e39a63;
+    --ch-pos: #8cc298; --ch-neg: #ee9a80; --ch-near: #d1ad6b; --ch-over: #ee8a6c; --ch-other: #57544e;
     --ch-tip-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 14px 30px -8px rgba(0, 0, 0, 0.7);
   }
 }
 :root[data-theme="dark"] {
-  --c1: #5fd63a; --c2: #6f9bb8; --c3: #e5ab2d; --c4: #d77fb0;
-  --c5: #b3a97a; --c6: #b58cc4; --c7: #4fb8a3; --c8: #f08a52;
-  --ch-pos: #5fd63a; --ch-neg: #ff8a68; --ch-near: #e5ab2d; --ch-over: #ff7a55; --ch-other: #5d675a;
+    --c1: #8cc298; --c2: #8aa0b2; --c3: #d1ad6b; --c4: #cf8aaa;
+    --c5: #b9ab84; --c6: #a898c2; --c7: #7fb5ab; --c8: #e39a63;
+    --ch-pos: #8cc298; --ch-neg: #ee9a80; --ch-near: #d1ad6b; --ch-over: #ee8a6c; --ch-other: #57544e;
   --ch-tip-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 14px 30px -8px rgba(0, 0, 0, 0.7);
 }
 
@@ -49,10 +49,10 @@
 .ch-zero { stroke: var(--ink-2, #454b45); stroke-width: 1; opacity: 0.55; shape-rendering: crispEdges; }
 .ch-axt { fill: var(--muted, #666d66); font-size: 11px; font-weight: 500; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
 .ch-ref line { stroke: var(--muted, #666d66); stroke-width: 1; stroke-dasharray: 4 3; shape-rendering: crispEdges; }
-.ch-reft { fill: var(--ink-2, #454b45); font-size: 10.5px; font-weight: 600; paint-order: stroke; stroke: var(--surface, #fff); stroke-width: 3px; stroke-linejoin: round; }
+.ch-reft { fill: var(--ink-2, #454b45); font-size: 10.5px; font-weight: 500; paint-order: stroke; stroke: var(--surface, #fff); stroke-width: 3px; stroke-linejoin: round; }
 .ch-fc-zone { fill: var(--surface-2, #f2f5f0); opacity: 0.7; }
-.ch-fc-t { fill: var(--muted, #666d66); font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; paint-order: stroke; stroke: var(--surface, #fff); stroke-width: 4px; stroke-linejoin: round; }
-.ch-hv { fill: var(--ink-2, #454b45); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ch-fc-t { fill: var(--muted, #666d66); font-size: 10.5px; font-weight: 500; letter-spacing: 0.02em; paint-order: stroke; stroke: var(--surface, #fff); stroke-width: 4px; stroke-linejoin: round; }
+.ch-hv { fill: var(--ink-2, #454b45); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
 
 /* ───────── lines & areas ───────── */
 .ch-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -82,7 +82,7 @@
 .ch-bar.wf.dn { fill: var(--ch-neg); }
 .ch-conn { stroke: var(--line-strong, #c8cec5); stroke-width: 1; stroke-dasharray: 2 3; shape-rendering: crispEdges; }
 .ch-xl .ch-axt { font-size: 10.5px; }
-.ch-vt { fill: var(--ink-2, #454b45); font-size: 11px; font-weight: 600; text-anchor: middle; paint-order: stroke; stroke: var(--surface, #fff); stroke-width: 3px; stroke-linejoin: round; }
+.ch-vt { fill: var(--ink-2, #454b45); font-size: 11px; font-weight: 500; text-anchor: middle; paint-order: stroke; stroke: var(--surface, #fff); stroke-width: 3px; stroke-linejoin: round; }
 .ch-vt.total { fill: var(--ink, #1c1c1c); }
 
 /* ───────── legend ───────── */
@@ -99,13 +99,13 @@
 /* ───────── tooltip ───────── */
 .ch-tip { position: fixed; left: 0; top: 0; z-index: 1000; min-width: 150px; max-width: min(280px, calc(100vw - 16px)); padding: 10px 12px 11px; border: 1px solid var(--line, #e4e7e1); border-radius: 12px; background: var(--surface, #fff); color: var(--ink, #1c1c1c); box-shadow: var(--ch-tip-shadow); pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 0.12s ease; font-size: 0.78rem; line-height: 1.3; }
 .ch-tip.on { opacity: 1; visibility: visible; }
-.ch-tip-h { margin: 0 0 7px; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.02em; color: var(--muted, #666d66); }
+.ch-tip-h { margin: 0 0 7px; font-size: 0.74rem; font-weight: 500; letter-spacing: 0.02em; color: var(--muted, #666d66); }
 .ch-tip-r { display: flex; align-items: center; gap: 8px; padding: 2.5px 0; }
 .ch-tip-r.tot { margin-top: 4px; padding-top: 7px; border-top: 1px solid var(--line, #e4e7e1); }
 .ch-tip-sw { flex: none; width: 8px; height: 8px; border-radius: 2.5px; }
 .ch-tip-sw.ln { width: 12px; height: 3px; border-radius: 2px; }
 .ch-tip-n { flex: 1; min-width: 0; color: var(--ink-2, #454b45); }
-.ch-tip-v { flex: none; margin-left: 12px; font-weight: 700; color: var(--ink, #1c1c1c); font-size: 0.84rem; }
+.ch-tip-v { flex: none; margin-left: 12px; font-weight: 500; color: var(--ink, #1c1c1c); font-size: 0.84rem; }
 .ch-tip-note { margin-top: 6px; font-size: 0.7rem; color: var(--muted, #666d66); font-style: italic; }
 
 /* ───────── donut ───────── */
@@ -119,8 +119,8 @@
 .ch-donut.has-sel:not(.has-act) .ch-slice:not(.is-sel) { opacity: 0.5; }
 .ch-dcenter { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; pointer-events: none; }
 .ch-dc-l { max-width: 100%; font-size: 0.74rem; font-weight: 500; color: var(--muted, #666d66); line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.ch-dc-v { max-width: 100%; font-size: 1.32rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; color: var(--ink, #1c1c1c); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ch-dc-s { font-size: 0.78rem; font-weight: 600; color: var(--ink-2, #454b45); min-height: 1em; }
+.ch-dc-v { max-width: 100%; font-size: 1.32rem; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; color: var(--ink, #1c1c1c); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-dc-s { font-size: 0.78rem; font-weight: 500; color: var(--ink-2, #454b45); min-height: 1em; }
 .ch-dlist { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; width: 100%; }
 @supports (grid-template-columns: subgrid) {
   .ch-dlist { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto auto; column-gap: 10px; }
@@ -136,7 +136,7 @@
 .ch-drow:focus-visible { outline: 2px solid var(--focus, #1c1c1c); outline-offset: -2px; }
 .ch-dsw { width: 10px; height: 10px; border-radius: 3px; }
 .ch-dn { min-width: 0; font-size: 0.9rem; font-weight: 500; line-height: 1.25; color: var(--ink, #1c1c1c); overflow-wrap: anywhere; }
-.ch-dv { font-size: 0.9rem; font-weight: 600; color: var(--ink, #1c1c1c); text-align: right; }
+.ch-dv { font-size: 0.9rem; font-weight: 500; color: var(--ink, #1c1c1c); text-align: right; }
 .ch-dp { font-size: 0.8rem; color: var(--muted, #666d66); text-align: right; }
 
 /* ───────── ranked horizontal bars ───────── */
@@ -149,7 +149,7 @@ button.ch-hrow:focus-visible { outline: 2px solid var(--focus, #1c1c1c); outline
 .ch-hhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .ch-hname { min-width: 0; font-size: 0.92rem; font-weight: 500; color: var(--ink, #1c1c1c); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-hval { flex: none; display: inline-flex; align-items: baseline; gap: 8px; font-size: 0.92rem; }
-.ch-hval b { font-weight: 700; }
+.ch-hval b { font-weight: 500; }
 .ch-hval i { font-style: normal; font-size: 0.78rem; color: var(--muted, #666d66); font-weight: 500; min-width: 2.6em; text-align: right; }
 .ch-hrow.over .ch-hval b { color: var(--out, #861600); }
 .ch-htrack { position: relative; height: 8px; margin: 8px 0 0; border-radius: 999px; background: var(--line, #e4e7e1); }
