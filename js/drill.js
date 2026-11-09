@@ -19,7 +19,12 @@ export function setDock(el, fallback) { dock = el ? { el, fallback } : null; }
 export function isOpen() { return !!cur; }
 export function currentSpec() { return cur ? cur.spec : null; }
 
-// spec = { title, sub, months:[ym]|null, ids:[계정 id], mode:'exp'|'inc'|'acct', acctType, search }
+// spec = { title, sub, months:[ym]|null, ids:[계정 id], mode:'exp'|'inc'|'acct', acctType, search, owner }
+//   owner(선택): 그 사람 몫인 줄만 셉니다 — 보고서 "사람별"과 똑같은 규칙 (줄의 소유자 → 없으면 거래의 소유자 → Joint)
+
+/** 분개 한 줄이 누구 몫인지 (reports.ownerTotals 와 같은 규칙) */
+export function ownerOfPosting(p, it) { return String(p.owner || (it && it.txn && it.txn.owner) || 'Joint').trim() || 'Joint'; }
+function ownerHit(spec, p, it) { return !spec.owner || ownerOfPosting(p, it) === spec.owner; }
 export function show(api, spec) {
   const keep = cur && cur.spec && cur.spec.key === spec.key;
   cur = { api, spec, picked: keep ? cur.picked : new Set(), pickMode: keep ? cur.pickMode : false };
@@ -42,14 +47,14 @@ export function close() {
 
 // ───────── 데이터 ─────────
 
-function gather(state, spec) {
+export function gather(state, spec) {
   const ids = new Set(spec.ids.map(String));
   const months = spec.months ? new Set(spec.months) : null;
   const rows = [];
   state.d.items.forEach((it) => {
     if (months && !months.has(L.monthOf(it.txn.date))) return;
     let amt = 0, hit = false;
-    it.ps.forEach((p) => { if (!L.truthy(p.deleted) && ids.has(String(p.account_id))) { amt += L.num(p.amount_cad); hit = true; } });
+    it.ps.forEach((p) => { if (!L.truthy(p.deleted) && ids.has(String(p.account_id)) && ownerHit(spec, p, it)) { amt += L.num(p.amount_cad); hit = true; } });
     if (!hit) return;
     let v = amt;
     if (spec.mode === 'inc') v = -amt;
@@ -314,7 +319,7 @@ function splitList(it, spec, fmt, h) {
   const ids = new Set((spec.ids || []).map(String));
   const ccy = it.txn.currency || 'CAD';
   return h('ul', { class: 'dr-split', 'aria-label': L.SPLIT_LABEL(it.desc.split) },
-    it.desc.lines.map((l) => h('li', { class: ids.has(l.accountId) ? 'hit' : '' },
+    it.desc.lines.map((l) => h('li', { class: ids.has(l.accountId) && (!spec.owner || (String(l.owner || it.txn.owner || 'Joint').trim() || 'Joint') === spec.owner) ? 'hit' : '' },
       h('span', { class: 'n' }, l.name),
       h('span', { class: 'o' }, [L.ownerLabel(l.owner || it.txn.owner || 'Joint'), l.memo].filter(Boolean).join(' · ')),
       h('span', { class: 'a' }, (l.cad < 0 ? '−' : '') + fmt(Math.abs(l.cad)) + (ccy !== 'CAD' ? ' (' + fmt(Math.abs(l.orig), ccy) + ')' : '')))));

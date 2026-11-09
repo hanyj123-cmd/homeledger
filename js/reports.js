@@ -725,14 +725,33 @@ export function render(api) {
       h('div', { class: 'share-bar inc' }, h('i', { style: 'width:' + Math.round(r.income / top * 100) + '%' })),
       h('div', { class: 'share-bar exp' }, h('i', { style: 'width:' + Math.round(r.expense / top * 100) + '%' })));
     const netTxt = (v) => (v < 0 ? '−' : '') + fmt(Math.abs(v));
-    const go = (owner) => api.goSearch(owner);
-    body.append(h('div', { class: 'note' }, 'Tap a person to see their transactions (이름을 누르면 그 사람의 거래를 봅니다). Bars: income (수입, green) and spending (지출) compared across people (사람 사이 비교).'));
+    // 금액을 누르면 그 숫자를 이루는 거래만 정확히 엽니다 (글자 검색이 아니라 같은 계산 규칙으로 고름)
+    const allAccts = Array.from(api.accMap.values());
+    const incIds = allAccts.filter((a) => a.type === 'INCOME').map((a) => String(a.account_id));
+    const expIds = allAccts.filter((a) => a.type === 'EXPENSE').map((a) => String(a.account_id));
+    const openWho = (owner, kind) => {
+      const who = L.ownerLabel(owner);
+      const lab = kind === 'inc' ? ['Income', '수입'] : kind === 'exp' ? ['Spending', '지출'] : ['Net income', '순수입'];
+      D() && drill.show(D(), {
+        key: 'who:' + kind + ':' + owner + ':' + curMs.join(','), title: who + ' · ' + lab[0] + ' (' + lab[1] + ')', sub: rangeLabel(curMs), months: curMs,
+        ids: kind === 'inc' ? incIds : kind === 'exp' ? expIds : incIds.concat(expIds),
+        mode: kind === 'exp' ? 'exp' : 'inc', owner, search: '',
+        totalLabel: lab[0] + ' (' + lab[1] + ')',
+        addDefaults: kind === 'net' ? { owner, ownerTouched: true } : { kind: kind === 'inc' ? 'INCOME' : 'EXPENSE', owner, ownerTouched: true }
+      });
+    };
+    const go = (owner) => openWho(owner, 'net');
+    const amtBtn = (owner, kind, v) => h('button', {
+      type: 'button', class: 'amt' + (v ? '' : ' zero'), 'data-who': kind, 'aria-label': L.ownerLabel(owner) + ' ' + (kind === 'inc' ? 'income (수입)' : 'spending (지출)') + ' ' + fmt(v),
+      onclick: (e) => { e.stopPropagation(); openWho(owner, kind); }
+    }, fmt(v));
+    body.append(h('div', { class: 'note' }, 'Tap an amount to see exactly the transactions behind it; tap a name for all of that person\'s income and spending (금액을 누르면 그 금액을 이루는 거래만, 이름을 누르면 그 사람의 수입·지출 전체를 봅니다). Bars: income (수입, green) and spending (지출) compared across people (사람 사이 비교).'));
     if (lay === 'phone') {
       const box = h('div', { class: 'who-list', id: 'who-list' });
-      who.rows.forEach((r) => box.append(h('button', { type: 'button', class: 'who-card', 'data-owner': r.owner, onclick: () => go(r.owner) },
+      who.rows.forEach((r) => box.append(h('div', { class: 'who-card', 'data-owner': r.owner, role: 'button', tabindex: '0', onclick: () => go(r.owner), onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) go(r.owner); } },
         h('div', { class: 'wc-top' }, h('b', { class: 'wc-name' }, L.ownerLabel(r.owner)), h('span', { class: 'wc-net ' + (r.net < 0 ? 'out' : 'in') }, netTxt(r.net), h('span', { class: 'wc-netlab' }, ' net (순수입)'))),
-        h('div', { class: 'wc-line' }, h('span', null, 'Income (수입)'), h('b', null, fmt(r.income))),
-        h('div', { class: 'wc-line' }, h('span', null, 'Spending (지출)'), h('b', null, fmt(r.expense)), chg(r.delta, false)),
+        h('div', { class: 'wc-line' }, h('span', null, 'Income (수입)'), amtBtn(r.owner, 'inc', r.income)),
+        h('div', { class: 'wc-line' }, h('span', null, 'Spending (지출)'), amtBtn(r.owner, 'exp', r.expense), chg(r.delta, false)),
         barPair(r),
         h('div', { class: 'wc-sub' }, plab + ' ' + fmt(r.prevExpense) + ' · ' + r.share + '% of spending (지출 비중)'))));
       body.append(box);
@@ -745,7 +764,7 @@ export function render(api) {
       const tb = h('tbody');
       who.rows.forEach((r) => tb.append(h('tr', { class: 'line', 'data-owner': r.owner, tabindex: '0', onclick: () => go(r.owner), onkeydown: (e) => { if (e.key === 'Enter') go(r.owner); } },
         h('td', { class: 'nm' }, h('b', null, L.ownerLabel(r.owner))),
-        h('td', null, fmt(r.income)), h('td', null, fmt(r.expense)),
+        h('td', { class: 'amtcell' }, amtBtn(r.owner, 'inc', r.income)), h('td', { class: 'amtcell' }, amtBtn(r.owner, 'exp', r.expense)),
         h('td', { class: r.net < 0 ? 'out' : 'in' }, netTxt(r.net)),
         h('td', null, chg(r.delta, false)),
         h('td', null, r.share + '%'),
