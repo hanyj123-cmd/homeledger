@@ -72,6 +72,7 @@ const PRECACHE = [
   './js/settingsui.js',
   './js/summary-text.js',
   './js/summary.js',
+  './js/sysaccounts.js',
   './js/prefs.js',
   './js/catform.js',
   './js/reorder.js',

@@ -538,7 +538,7 @@ details.card > summary { cursor: pointer; font-weight: 500; font-size: 0.9rem; m
 @keyframes pulse { 50% { opacity: 0.55; } }
 
 /* ═════════ 보고서 ═════════ */
-.rep-grid { display: grid; gap: 16px; align-items: start; }
+.rep-grid { display: grid; gap: 16px; align-items: start; grid-template-columns: minmax(0, 1fr); }   /* 넓은 표는 페이지가 아니라 표 상자 안에서 가로로 밀림 */
 html[data-layout="tablet"] .rep-grid.docked { grid-template-columns: minmax(0, 1fr) 390px; }
 .dock { position: sticky; top: calc(var(--header-h) + 14px); max-height: calc(100vh - var(--header-h) - 28px); min-width: 0; }
 .dock:empty { display: none; }
@@ -1642,7 +1642,7 @@ html[data-layout="phone"] .brand-text i, html:not([data-layout]) .brand-text i {
 
 /* v0.12 migrate card */
 .set-file { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; margin-top: 8px; }
-.set-file-in { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+input.set-file-in { position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; margin: 0; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); pointer-events: none; }   /* input[type="file"] { width: 100% } 보다 우선 */
 #set-mig-plan { margin-top: 10px; }
 
 /* ═══ v0.13 보고서 (선택·금액 탭·순서 바꾸기·달러 단위) ═══ */
@@ -2435,3 +2435,7 @@ table.rpt tr.net td.r { border-bottom: 3px double var(--ink-2); }
 :root[data-theme="dark"] .sm-bchip { background: var(--surface); }
 /* 폰: 띠 제목이 길면 잘리지 않고 두 줄로 */
 html[data-layout="phone"] .acct-pick .nm, html:not([data-layout]) .acct-pick .nm { white-space: normal; }
+/* 알약 탭이 화면보다 넓으면 페이지 대신 탭 줄 안에서 가로로 밀림 */
+.segtd { min-width: 0; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.segtd::-webkit-scrollbar { display: none; }
+.segtd button { flex: none; }
