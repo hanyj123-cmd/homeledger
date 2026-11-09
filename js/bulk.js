@@ -13,10 +13,11 @@ export const REASONS = {
   mismatch: 'Expense ↔ income mismatch (지출·수입 종류가 다름)',
   nocat: 'No category line found (카테고리 줄 없음)',
   sameacct: 'Same account on both sides (양쪽 계좌가 같음)',
-  special: 'Not an expense/income (지출·수입이 아님)'
+  special: 'Not an expense/income (지출·수입이 아님)',
+  notexp: 'Only spending can be a refund (지출만 환불로 바꿀 수 있어요)'
 };
 export const REASON_SHORT = {
-  transfer: 'transfer (이체)', split: 'split (나눈 거래)', receipt: 'receipt (영수증)', mismatch: 'type (종류 다름)', nocat: 'no category (카테고리 없음)', sameacct: 'same account (같은 계좌)', special: 'other type (다른 종류)'
+  transfer: 'transfer (이체)', split: 'split (나눈 거래)', receipt: 'receipt (영수증)', mismatch: 'type (종류 다름)', nocat: 'no category (카테고리 없음)', sameacct: 'same account (같은 계좌)', special: 'other type (다른 종류)', notexp: 'not spending (지출 아님)'
 };
 
 const live = (ps) => (ps || []).filter((p) => !L.truthy(p.deleted));
@@ -38,7 +39,8 @@ export function planBulk(items, ids, patch, accMap, now, opts) {
   const special = p.special === 'PASSTHROUGH' || p.special === 'TRANSFER' ? p.special : '';
   const xacct = special === 'TRANSFER' ? accMap.get(String(p.transferAccountId || '')) : null;
   if (special === 'TRANSFER' && !L.isMoneyAccount(xacct)) throw new Error('이체 상대 계좌를 선택하세요.');
-  if (special === 'PASSTHROUGH' && !accMap.get(CONFIG.CLEARING_ID)) throw new Error('전달 자금(2900) 계정이 없습니다.');
+  const passId = special === 'PASSTHROUGH' ? L.clearingIdFor(p.passKind === 'CHURCH' ? 'CHURCH' : 'PERSONAL') : '';
+  if (special === 'PASSTHROUGH' && !accMap.get(passId)) throw new Error('전달 자금 계정이 없습니다 (' + passId + ').');
   const hasTrip = Object.prototype.hasOwnProperty.call(p, 'tripTag') && p.tripTag !== undefined && p.tripTag !== null;
   const trip = hasTrip ? String(p.tripTag).trim() : '';
   const memoAdd = String(p.memoAppend || '').trim();
@@ -89,7 +91,7 @@ export function planBulk(items, ids, patch, accMap, now, opts) {
       if (desc.kind === 'OPENING') skip = 'transfer';
       else if (desc.kind === 'TRANSFER') { if (special === 'PASSTHROUGH') skip = 'transfer'; else same = true; }
       else if (desc.kind === 'PASSTHROUGH') {
-        if (special === 'PASSTHROUGH') same = true;
+        if (special === 'PASSTHROUGH') { if (clearing.length === 1 && String(clearing[0].account_id) !== passId && !exps.length && !incs.length) target = clearing[0]; else same = true; }
         else if (clearing.length !== 1 || exps.length || incs.length) skip = 'split';
         else target = clearing[0];
       } else if (desc.kind === 'EXPENSE' || desc.kind === 'INCOME') {
@@ -102,7 +104,7 @@ export function planBulk(items, ids, patch, accMap, now, opts) {
       if (target && special === 'TRANSFER' && ps.some((q) => q !== target && String(q.account_id) === String(xacct.account_id))) { skip = 'sameacct'; target = null; }
       if (skip && !owner && !status && !hasTrip && !memoAdd) { out.skipped.push({ id, reason: skip }); return; }
       if (target) {
-        pget(target).account_id = special === 'TRANSFER' ? String(xacct.account_id) : CONFIG.CLEARING_ID;
+        pget(target).account_id = special === 'TRANSFER' ? String(xacct.account_id) : passId;
         const pass = special === 'PASSTHROUGH';
         if (L.truthy(t.is_passthrough) !== pass) t.is_passthrough = pass;
         if (String(t.status).toUpperCase() === 'REVIEW') t.status = 'MATCHED';
@@ -176,6 +178,36 @@ export function planBulk(items, ids, patch, accMap, now, opts) {
   return out;
 }
 
+/**
+ * 환불 켜기/끄기: 지출 거래의 방향을 뒤집습니다 (돈이 계좌로 돌아오고 같은 카테고리에서 빠짐).
+ * 입력 창과 같은 규칙(formFromTxn → makeRecords)으로 다시 만들어서 나눈 거래 · 외화도 맞게 바뀝니다.
+ * on=true 면 환불로, false 면 일반 지출로. 이미 그 상태인 거래는 그대로 둡니다.
+ */
+export function planRefund(items, ids, on, accMap, now, opts) {
+  const o = opts || {};
+  const want = new Set(Array.from(ids || [], String));
+  const out = { txns: [], postings: [], lineItems: [], skipped: [], changed: 0, remember: [] };
+  const rcIds = new Set((o.lineItems || []).filter((li) => !L.truthy(li.deleted)).map((li) => String(li.txn_id)));
+  (items || []).forEach((it) => {
+    const id = String(it.txn.txn_id);
+    if (!want.has(id) || L.truthy(it.txn.deleted)) return;
+    const ps = live(it.ps);
+    const desc = it.desc || L.describeTxn(it.txn, ps, accMap);
+    if (desc.kind !== 'EXPENSE' || L.truthy(it.txn.is_passthrough)) { out.skipped.push({ id, reason: desc.kind === 'TRANSFER' || desc.kind === 'OPENING' ? 'transfer' : 'notexp' }); return; }
+    if (rcIds.has(id)) { out.skipped.push({ id, reason: 'receipt' }); return; }
+    const isRefund = desc.flow === 'in';
+    if (isRefund === !!on) return;
+    const f = L.formFromTxn(it.txn, ps, accMap);
+    f.refund = !!on;
+    const res = L.makeRecords(f, { accMap, existing: { txn: it.txn, ps: it.ps }, now });
+    if (res.error) { out.skipped.push({ id, reason: 'special' }); return; }
+    out.txns.push(res.txn);
+    res.postings.forEach((q) => out.postings.push(q));
+    out.changed++;
+  });
+  return out;
+}
+
 /** 건너뛴 이유 요약: "split (나눈 거래) 2, transfer (이체) 1" */
 export function skipSummary(skipped) {
   const n = new Map();
@@ -212,6 +244,8 @@ export function bulkBar(api, ctx) {
     act('bk-cat', 'tag', 'Category (카테고리)', () => openCategory(api, ctx)),
     act('bk-owner', 'people', 'Owner (소유자)', () => openOwner(api, ctx)),
     act('bk-rev', 'check', 'Reviewed (확인 완료)', () => run(api, ctx, { status: 'MATCHED' }, { label: 'Marked reviewed (확인 완료)' })),
+    act('bk-pass', 'transfer', 'Passthrough (전달 자금)', () => openPass(api, ctx)),
+    act('bk-refund', 'undo', 'Refund (환불)', () => openRefund(api, ctx)),
     act('bk-trip', 'calendar', 'Trip tag (여행 태그)', () => openTrip(api, ctx)),
     act('bk-memo', 'memo', 'Memo (메모)', () => openMemo(api, ctx)),
     act('bk-del', 'trash', 'Delete (삭제)', () => doDelete(api, ctx), 'danger')
@@ -384,6 +418,53 @@ function openOwner(api, ctx) {
       type: 'button', class: 'bk-owner', 'data-owner': o,
       onclick: async () => { await run(api, ctx, { owner: o }, { label: 'Owner changed (소유자 변경)' }); close(); }
     }, icon('people', 22), h('span', null, ownerLabel(o))))));
+}
+
+// 전달 자금 켜기 · 끄기
+function openPass(api, ctx) {
+  const { h } = api;
+  const items = chosenItems(api, ctx);
+  const n = items.length;
+  const isPass = (it) => (it.desc && it.desc.kind === 'PASSTHROUGH') || L.truthy(it.txn.is_passthrough);
+  const nOn = items.filter(isPass).length;
+  const hasChurch = !!api.state.d.accMap.get(CONFIG.CLEARING_CHURCH_ID);
+  const opt = (id, ic, title, sub, fn) => h('button', { type: 'button', class: 'bk-opt', id, onclick: fn }, icon(ic, 22), h('span', null, h('b', null, title), h('small', null, sub)));
+  const close = sheet(api, 'Passthrough (전달 자금)', n + ' selected (' + n + '건 선택) · ' + nOn + ' already passthrough (이미 전달 자금 ' + nOn + '건)',
+    h('div', { class: 'bk-opts', id: 'bk-pass-opts' },
+      opt('bk-pass-on', 'people', 'Turn on — personal (켜기 · 개인)', 'Money passed on for someone else; left out of income and spending (다른 사람 몫 · 수입·지출에서 빠짐)',
+        async () => { close(); await run(api, ctx, { special: 'PASSTHROUGH', passKind: 'PERSONAL' }, { label: 'Passthrough on (전달 자금 켬)' }); }),
+      hasChurch ? opt('bk-pass-church', 'people', 'Turn on — church (켜기 · 교회)', 'Church money you collect or pay out (교회 돈)',
+        async () => { close(); await run(api, ctx, { special: 'PASSTHROUGH', passKind: 'CHURCH' }, { label: 'Passthrough on — church (교회 전달 자금)' }); }) : null,
+      opt('bk-pass-off', 'tag', 'Turn off (끄기)', 'Back to spending or income — pick the category next (다시 지출·수입으로 · 다음에 카테고리 선택)',
+        () => { close(); openCategory(api, ctx); })));
+  return close;
+}
+
+// 환불 켜기 · 끄기
+function openRefund(api, ctx) {
+  const { h } = api;
+  const st = api.state;
+  const items = chosenItems(api, ctx);
+  const n = items.length;
+  const nOn = items.filter((it) => it.desc && it.desc.kind === 'EXPENSE' && it.desc.flow === 'in').length;
+  const go = async (on) => {
+    close();
+    let plan;
+    try { plan = planRefund(items, ctx.selected, on, st.d.accMap, L.nowIso(), { lineItems: st.data.lineItems || [] }); } catch (e) { api.toast(e.message || String(e)); return; }
+    const skipTxt = plan.skipped.length ? ' · skipped ' + plan.skipped.length + ' (건너뜀): ' + skipSummary(plan.skipped) : '';
+    if (!plan.changed) { api.toast('Nothing to change (바꿀 것이 없습니다)' + skipTxt); return; }
+    const { puts, order } = batchOf(plan, [], false);
+    try { await sync.saveBatch(puts, order); } catch (e) { api.toast('Could not save (저장하지 못했습니다): ' + (e.message || e)); return; }
+    ctx.selected.clear(); ctx.onDone(true);
+    await reloadAll(api);
+    api.toast((on ? 'Marked as refund (환불로 바꿈) ' : 'Refund off (환불 해제) ') + plan.changed + ' (' + plan.changed + '건)' + skipTxt);
+  };
+  const opt = (id, ic, title, sub, fn) => h('button', { type: 'button', class: 'bk-opt', id, onclick: fn }, icon(ic, 22), h('span', null, h('b', null, title), h('small', null, sub)));
+  const close = sheet(api, 'Refund (환불)', n + ' selected (' + n + '건 선택) · ' + nOn + ' already refunds (이미 환불 ' + nOn + '건)',
+    h('div', { class: 'bk-opts', id: 'bk-refund-opts' },
+      opt('bk-refund-on', 'undo', 'Turn on (켜기)', 'Money came back — reduces that category\'s spending (돈이 돌아옴 · 그 카테고리 지출에서 빠짐)', () => go(true)),
+      opt('bk-refund-off', 'tag', 'Turn off (끄기)', 'Normal spending again (다시 일반 지출로)', () => go(false))));
+  return close;
 }
 
 function existingTrips(api) {

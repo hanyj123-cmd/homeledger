@@ -2551,3 +2551,10 @@ input.pe-in.mine { border-color: var(--green); background: var(--tint); }
   .pe-ctl { gap: 2px; }
   input.pe-in { padding: 0 4px; font-size: 0.95rem; }
 }
+/* 선택 막대: 전달 자금 · 환불 켜기/끄기 창 */
+.bk-opts { display: grid; gap: 8px; margin: 6px 0 4px; }
+.bk-opt { display: flex; align-items: flex-start; gap: 12px; width: 100%; min-height: 56px; padding: 12px 14px; text-align: left; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
+.bk-opt:hover { background: var(--tint); border-color: var(--green); }
+.bk-opt .ic { color: var(--green-ink); margin-top: 2px; flex: none; }
+.bk-opt b { display: block; font-weight: 600; }
+.bk-opt small { display: block; color: var(--muted); font-size: 0.84rem; margin-top: 2px; line-height: 1.4; }
