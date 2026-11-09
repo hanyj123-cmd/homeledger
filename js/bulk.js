@@ -14,10 +14,12 @@ export const REASONS = {
   nocat: 'No category line found (카테고리 줄 없음)',
   sameacct: 'Same account on both sides (양쪽 계좌가 같음)',
   special: 'Not an expense/income (지출·수입이 아님)',
-  notexp: 'Only spending can be a refund (지출만 환불로 바꿀 수 있어요)'
+  notexp: 'Only spending can be a refund (지출만 환불로 바꿀 수 있어요)',
+  direction: 'Money went out — income/refund needs money coming in (나간 돈은 수입·환불이 될 수 없어요)',
+  opening: 'Opening balance (기초잔액)'
 };
 export const REASON_SHORT = {
-  transfer: 'transfer (이체)', split: 'split (나눈 거래)', receipt: 'receipt (영수증)', mismatch: 'type (종류 다름)', nocat: 'no category (카테고리 없음)', sameacct: 'same account (같은 계좌)', special: 'other type (다른 종류)', notexp: 'not spending (지출 아님)'
+  transfer: 'transfer (이체)', split: 'split (나눈 거래)', receipt: 'receipt (영수증)', mismatch: 'type (종류 다름)', nocat: 'no category (카테고리 없음)', sameacct: 'same account (같은 계좌)', special: 'other type (다른 종류)', notexp: 'not spending (지출 아님)', direction: 'money out (나간 돈)', opening: 'opening (기초잔액)'
 };
 
 const live = (ps) => (ps || []).filter((p) => !L.truthy(p.deleted));
@@ -208,6 +210,84 @@ export function planRefund(items, ids, on, accMap, now, opts) {
   return out;
 }
 
+/**
+ * 종류 바꾸기 (지출 · 수입 · 환불 · 이체 · 전달 자금). 은행 쪽 금액과 방향은 그대로 두고 상대편(카테고리 · 계좌)만 바꿉니다.
+ * target = { kind: 'EXPENSE'|'INCOME'|'REFUND'|'TRANSFER'|'PASSTHROUGH', categoryId?, accountId?, passKind? }
+ * opts.viewAcct: 거래 탭에서 보고 있는 계좌 (이체를 지출 · 수입으로 바꿀 때 그 계좌 쪽을 씀)
+ */
+export function planRetype(items, ids, target, accMap, now, opts) {
+  const o = opts || {};
+  const want = new Set(Array.from(ids || [], String));
+  const out = { txns: [], postings: [], lineItems: [], skipped: [], changed: 0, remember: [] };
+  const rcIds = new Set((o.lineItems || []).filter((li) => !L.truthy(li.deleted)).map((li) => String(li.txn_id)));
+  const tk = target.kind;
+  const sig = (ps) => live(ps).map((q) => String(q.account_id) + ':' + L.round(L.num(q.amount_cad), 2)).sort().join('|');
+  (items || []).forEach((it) => {
+    const id = String(it.txn.txn_id);
+    if (!want.has(id) || L.truthy(it.txn.deleted)) return;
+    const ps = live(it.ps);
+    const d = it.desc || L.describeTxn(it.txn, ps, accMap);
+    if (d.kind === 'OPENING') { out.skipped.push({ id, reason: 'opening' }); return; }
+    if (d.split) { out.skipped.push({ id, reason: 'split' }); return; }
+    if (rcIds.has(id)) { out.skipped.push({ id, reason: 'receipt' }); return; }
+    const f0 = L.formFromTxn(it.txn, ps, accMap);
+    // 은행 쪽 계좌와 방향
+    let money, flow, other = '';
+    if (d.kind === 'TRANSFER') {
+      const wantIn = tk === 'INCOME' || tk === 'REFUND';
+      const useTo = o.viewAcct ? String(o.viewAcct) === String(f0.toId) : wantIn;
+      money = useTo ? f0.toId : f0.fromId; flow = useTo ? 'in' : 'out'; other = useTo ? f0.fromId : f0.toId;
+    } else { money = d.accountId; flow = d.flow === 'in' ? 'in' : 'out'; }
+    const f = Object.assign({}, f0, { split: false, lines: [], refund: false, passthrough: false, fromId: '', toId: '', categoryId: '' });
+    if (tk === 'EXPENSE' || tk === 'REFUND') {
+      if (tk === 'REFUND' && flow !== 'in') { out.skipped.push({ id, reason: 'direction' }); return; }
+      Object.assign(f, { kind: 'EXPENSE', fromId: money, categoryId: String(target.categoryId), refund: flow === 'in' });
+    } else if (tk === 'INCOME') {
+      if (flow !== 'in') { out.skipped.push({ id, reason: 'direction' }); return; }
+      Object.assign(f, { kind: 'INCOME', toId: money, categoryId: String(target.categoryId) });
+    } else if (tk === 'TRANSFER') {
+      const x = String(target.accountId || '');
+      if (!x || x === String(money)) { out.skipped.push({ id, reason: 'sameacct' }); return; }
+      Object.assign(f, flow === 'out' ? { kind: 'TRANSFER', fromId: money, toId: x } : { kind: 'TRANSFER', fromId: x, toId: money });
+    } else if (tk === 'PASSTHROUGH') {
+      Object.assign(f, flow === 'out' ? { kind: 'EXPENSE', fromId: money } : { kind: 'INCOME', toId: money }, { passthrough: true, passKind: target.passKind === 'CHURCH' ? 'CHURCH' : 'PERSONAL' });
+    } else return;
+    const res = L.makeRecords(f, { accMap, existing: { txn: it.txn, ps: it.ps }, now });
+    if (res.error) { out.skipped.push({ id, reason: 'special' }); return; }
+    const before = sig(ps), after = sig(res.postings);
+    if (before === after && L.truthy(it.txn.is_passthrough) === L.truthy(res.txn.is_passthrough)) return;
+    if (String(res.txn.status).toUpperCase() === 'REVIEW' && !(tk !== 'TRANSFER' && String(target.categoryId) === '9999')) res.txn.status = 'MATCHED';
+    out.txns.push(res.txn);
+    res.postings.forEach((q) => out.postings.push(q));
+    out.changed++;
+    void other;
+  });
+  return out;
+}
+
+/**
+ * 카테고리 · 종류 바꾸기 (선택한 거래 전부).
+ * 같은 종류 안에서 카테고리만 바꾸는 거래는 planBulk(영수증 항목 · 규칙 기억까지), 종류가 바뀌는 거래는 planRetype.
+ */
+export function planChange(items, ids, target, accMap, now, opts) {
+  const want = new Set(Array.from(ids || [], String));
+  const chosen = (items || []).filter((it) => want.has(String(it.txn.txn_id)));
+  const kindOf = (it) => it.desc || L.describeTxn(it.txn, live(it.ps), accMap);
+  const sameKind = (it) => {
+    const d = kindOf(it);
+    if (target.kind === 'EXPENSE') return d.kind === 'EXPENSE';
+    if (target.kind === 'INCOME') return d.kind === 'INCOME';
+    if (target.kind === 'REFUND') return d.kind === 'EXPENSE' && d.flow === 'in';
+    return false;
+  };
+  const a = chosen.filter(sameKind), b = chosen.filter((it) => !sameKind(it));
+  const p1 = a.length ? planBulk(a, a.map((it) => String(it.txn.txn_id)), { categoryId: target.categoryId }, accMap, now, opts) : null;
+  const p2 = b.length ? planRetype(b, b.map((it) => String(it.txn.txn_id)), target, accMap, now, opts) : null;
+  const out = { txns: [], postings: [], lineItems: [], skipped: [], changed: 0, remember: [] };
+  [p1, p2].forEach((p) => { if (!p) return; ['txns', 'postings', 'lineItems', 'skipped', 'remember'].forEach((k) => { out[k] = out[k].concat(p[k] || []); }); out.changed += p.changed; });
+  return out;
+}
+
 /** 건너뛴 이유 요약: "split (나눈 거래) 2, transfer (이체) 1" */
 export function skipSummary(skipped) {
   const n = new Map();
@@ -241,7 +321,7 @@ export function bulkBar(api, ctx) {
   const doneBtn = h('button', { type: 'button', class: 'bk-x', id: 'bk-done', 'aria-label': 'Done — leave selection (선택 끝내기)', title: 'Done (완료) · Esc', onclick: () => ctx.onDone() }, icon('close', 22));
   const act = (id, ic, label, fn, cls) => h('button', { type: 'button', class: 'bk-act' + (cls ? ' ' + cls : ''), id, onclick: fn }, icon(ic, 22), h('span', null, label));
   const acts = [
-    act('bk-cat', 'tag', 'Category (카테고리)', () => openCategory(api, ctx)),
+    act('bk-cat', 'tag', 'Type & category (종류 · 카테고리)', () => openCategory(api, ctx)),
     act('bk-owner', 'people', 'Owner (소유자)', () => openOwner(api, ctx)),
     act('bk-rev', 'check', 'Reviewed (확인 완료)', () => run(api, ctx, { status: 'MATCHED' }, { label: 'Marked reviewed (확인 완료)' })),
     act('bk-pass', 'transfer', 'Passthrough (전달 자금)', () => openPass(api, ctx)),
@@ -344,68 +424,96 @@ export function categoryGroups(accounts) {
   return groups;
 }
 
-function openCategory(api, ctx) {
+// 종류 · 카테고리 바꾸기: 지출 · 수입 · 환불 · 이체 · 전달 자금
+const TYPE_TABS = [
+  ['EXPENSE', 'Spending (지출)'], ['INCOME', 'Income (수입)'], ['REFUND', 'Refund (환불)'], ['TRANSFER', 'Transfer (이체)'], ['PASSTHROUGH', 'Passthrough (전달 자금)']
+];
+function openCategory(api, ctx, startTab) {
   const { h } = api;
   const st = api.state;
   const items = chosenItems(api, ctx);
-  let pick = '';        // 카테고리 id, 또는 '__PT'(전달 자금) / '__TR'(이체)
-  let xacct = '';       // 이체 상대 계좌
+  const n = ctx.selected.size;
+  // 처음 탭: 선택한 거래 대부분의 종류
+  const cnt = {};
+  items.forEach((it) => { const d = it.desc; const k = d.kind === 'EXPENSE' && d.flow === 'in' ? 'REFUND' : d.kind; cnt[k] = (cnt[k] || 0) + 1; });
+  let tab = startTab || Object.keys(cnt).filter((k) => TYPE_TABS.some((t) => t[0] === k)).sort((x, y) => cnt[y] - cnt[x])[0] || 'EXPENSE';
+  let pick = '';          // 카테고리 id · 계좌 id · 'PERSONAL'|'CHURCH'
   let remember = false;
-  const patchNow = () => (pick === '__PT' ? { special: 'PASSTHROUGH' } : pick === '__TR' ? { special: 'TRANSFER', transferAccountId: xacct } : { categoryId: pick });
-  const preview = h('div', { class: 'bk-prev', id: 'bk-prev', 'aria-live': 'polite' }, 'Pick a category below (아래에서 카테고리를 고르세요)');
-  const applyBtn = h('button', { type: 'button', class: 'btn', id: 'bk-apply', disabled: true, onclick: async () => {
-    applyBtn.disabled = true;
-    const okd = await run(api, ctx, patchNow(), { remember, label: pick === '__PT' ? 'Set to passthrough (전달 자금으로 변경)' : pick === '__TR' ? 'Set to transfer (이체로 변경)' : 'Category changed (카테고리 변경)' });
-    if (okd) close(); else applyBtn.disabled = false;
-  } }, 'Apply (적용)');
+  const target = () => (tab === 'TRANSFER' ? { kind: tab, accountId: pick } : tab === 'PASSTHROUGH' ? { kind: tab, passKind: pick } : { kind: tab, categoryId: pick });
+  const opts = () => ({ lineItems: st.data.lineItems || [], viewAcct: st.acct || '' });
+  const preview = h('div', { class: 'bk-prev', id: 'bk-prev', 'aria-live': 'polite' });
+  const applyBtn = h('button', { type: 'button', class: 'btn', id: 'bk-apply', disabled: true }, 'Apply (적용)');
   const remBox = h('label', { class: 'check bk-rem' },
     h('input', { type: 'checkbox', id: 'bk-remember', onchange: (e) => { remember = e.target.checked; } }),
     h('span', null, 'Remember as rule — use this category for these merchants next time (규칙으로 기억 — 다음부터 이 가게는 자동 분류)'));
-  const find = h('div', { class: 'search bk-find' }, icon('search', 20), h('input', {
-    type: 'search', id: 'bk-find', placeholder: 'Find category (카테고리 찾기)', autocomplete: 'off',
-    oninput: (e) => {
-      const q = e.target.value.trim().toLowerCase();
-      grid.querySelectorAll('.bk-cat').forEach((b) => { b.hidden = !!q && b.getAttribute('data-n').indexOf(q) < 0; });
-      grid.querySelectorAll('.bk-grp').forEach((g) => { g.hidden = !g.querySelector('.bk-cat:not([hidden])'); });
+  remBox.hidden = true;
+  const tabsEl = h('div', { class: 'segtd sm bk-types', role: 'tablist', id: 'bk-types', 'aria-label': 'Type (종류)' });
+  const body = h('div', { class: 'bk-cats', id: 'bk-cats' });
+  const find = h('input', { type: 'search', id: 'bk-find', placeholder: 'Find (찾기)', autocomplete: 'off', oninput: () => filter() });
+  const findBox = h('div', { class: 'search bk-find' }, icon('search', 20), find);
+  const note = h('p', { class: 'hint bk-tnote', id: 'bk-tnote' });
+  const NOTES = {
+    EXPENSE: 'Money out becomes spending; money in becomes a refund of that category (나간 돈 → 지출, 들어온 돈 → 그 카테고리 환불).',
+    INCOME: 'Only money that came in can be income (들어온 돈만 수입이 돼요).',
+    REFUND: 'Money that came back — reduces that category\'s spending. Only money in (돌아온 돈 · 들어온 돈만).',
+    TRANSFER: 'Between your own accounts — not income or spending (내 계좌끼리 · 수입·지출 아님).',
+    PASSTHROUGH: 'Money handled for someone else — left out of income and spending (다른 사람 몫 · 수입·지출에서 빠짐).'
+  };
+  function filter() {
+    const q = find.value.trim().toLowerCase();
+    body.querySelectorAll('.bk-cat').forEach((b) => { b.hidden = !!q && (b.getAttribute('data-n') || '').indexOf(q) < 0; });
+    body.querySelectorAll('.bk-grp').forEach((g) => { g.hidden = !g.querySelector('.bk-cat:not([hidden])'); });
+  }
+  const btn = (id, label, cls, nm) => h('button', { type: 'button', class: 'bk-cat ' + (cls || ''), 'data-id': id, 'data-n': nm || label.toLowerCase(), 'aria-pressed': String(id === pick), onclick: () => { pick = id; refresh(); } }, label);
+  function drawBody() {
+    tabsEl.replaceChildren(...TYPE_TABS.map(([k, lab]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(k === tab), class: k === tab ? 'on' : '', 'data-type': k, onclick: () => { if (tab !== k) { tab = k; pick = ''; drawBody(); refresh(); } } }, lab, cnt[k] ? h('span', { class: 'ko' }, ' ' + cnt[k]) : null)));
+    note.textContent = NOTES[tab];
+    findBox.hidden = tab === 'PASSTHROUGH';
+    find.value = '';
+    let kids;
+    if (tab === 'TRANSFER') {
+      const accts = (st.data.accounts || []).filter((a) => L.isActive(a) && L.isMoneyAccount(a)).sort((x, y) => (L.num(x.sort_order) - L.num(y.sort_order)) || String(x.name).localeCompare(String(y.name)));
+      kids = [h('div', { class: 'bk-grp' }, h('div', { class: 'bk-gh' }, 'Other account (상대 계좌)'), h('div', { class: 'bk-cl' }, accts.map((a) => btn(String(a.account_id), L.accLabel(st.d.accMap.get(String(a.account_id)) || a), '', (String(a.name) + ' ' + String(a.name_ko || '')).toLowerCase()))))];
+    } else if (tab === 'PASSTHROUGH') {
+      const church = !!st.d.accMap.get(CONFIG.CLEARING_CHURCH_ID);
+      kids = [h('div', { class: 'bk-grp' }, h('div', { class: 'bk-cl' }, [btn('PERSONAL', 'Personal (개인)'), church ? btn('CHURCH', 'Church (교회)') : null].filter(Boolean)))];
+    } else {
+      const want = tab === 'INCOME' ? '수입' : null;
+      kids = categoryGroups(st.data.accounts).filter((g) => (want ? g.key === want : g.key !== '수입')).map((g) => h('div', { class: 'bk-grp' },
+        h('div', { class: 'bk-gh ' + (L.GROUP_CLASS[g.key] || '') }, g.label),
+        h('div', { class: 'bk-cl' }, g.list.map((a) => btn(String(a.account_id), L.accLabel(a), L.GROUP_CLASS[g.key] || '', (String(a.name) + ' ' + String(a.name_ko || '')).toLowerCase())))));
     }
-  }));
-  const refresh = () => {
-    grid.querySelectorAll('.bk-cat').forEach((b) => b.setAttribute('aria-pressed', String(b.getAttribute('data-id') === pick)));
-    xrow.hidden = pick !== '__TR';
-    if (!pick) return;
-    if (pick === '__TR' && !xacct) { preview.textContent = 'Pick the other account below (상대 계좌를 고르세요)'; applyBtn.disabled = true; remBox.hidden = true; return; }
+    body.replaceChildren(...kids);
+  }
+  function refresh() {
+    body.querySelectorAll('.bk-cat').forEach((b) => b.setAttribute('aria-pressed', String(b.getAttribute('data-id') === pick)));
+    if (!pick) { preview.textContent = tab === 'TRANSFER' ? 'Pick the other account (상대 계좌를 고르세요)' : tab === 'PASSTHROUGH' ? 'Pick personal or church (개인 · 교회를 고르세요)' : 'Pick a category (카테고리를 고르세요)'; applyBtn.disabled = true; remBox.hidden = true; return; }
     let plan;
-    try { plan = planBulk(items, ctx.selected, patchNow(), st.d.accMap, L.nowIso(), { lineItems: st.data.lineItems || [] }); } catch (e) { preview.textContent = e.message; applyBtn.disabled = true; return; }
-    const nm = pick === '__PT' ? 'Passthrough (전달 자금)' : pick === '__TR' ? 'Transfer (이체) · ' + L.accLabel(st.d.accMap.get(xacct)) : L.accLabel(st.d.accMap.get(pick));
-    preview.replaceChildren(...[
-      h('b', null, nm),
+    try { plan = planChange(items, ctx.selected, target(), st.d.accMap, L.nowIso(), opts()); } catch (e) { preview.textContent = e.message; applyBtn.disabled = true; return; }
+    const tl = TYPE_TABS.find((t) => t[0] === tab)[1];
+    const nm = tab === 'PASSTHROUGH' ? (pick === 'CHURCH' ? 'Church (교회)' : 'Personal (개인)') : L.accLabel(st.d.accMap.get(pick));
+    preview.replaceChildren(...[h('b', null, tl + ' · ' + nm),
       h('span', null, ' — ' + plan.changed + ' will change (' + plan.changed + '건 변경)'),
       plan.skipped.length ? h('span', { class: 'bk-skip' }, ' · skipped ' + plan.skipped.length + ' (건너뜀 ' + plan.skipped.length + '): ' + skipSummary(plan.skipped)) : null].filter(Boolean));
     applyBtn.disabled = !plan.changed;
     remBox.hidden = !plan.remember.length;
-  };
-  const catBtn = (id, label, cls, n) => h('button', {
-    type: 'button', class: 'bk-cat ' + cls, 'data-id': id, 'data-n': n, 'aria-pressed': 'false',
-    onclick: () => { pick = id; refresh(); }
-  }, label);
-  const moneyAccts = (st.data.accounts || []).filter((a) => L.isActive(a) && L.isMoneyAccount(a)).sort((x, y) => (L.num(x.sort_order) - L.num(y.sort_order)) || String(x.name).localeCompare(String(y.name)));
-  const xsel = h('select', { id: 'bk-xacct', 'aria-label': 'Other account (상대 계좌)', onchange: (e) => { xacct = e.target.value; refresh(); } },
-    [h('option', { value: '' }, 'Choose account… (계좌 선택…)')].concat(moneyAccts.map((a) => h('option', { value: a.account_id }, L.accLabel(st.d.accMap.get(String(a.account_id)) || a)))));
-  const xrow = h('label', { class: 'field bk-xrow', id: 'bk-xrow', hidden: true },
-    h('span', { class: 'lbl' }, 'Other account of the transfer (이체 상대 계좌)'), xsel);
-  const other = h('div', { class: 'bk-grp', id: 'bk-other' },
-    h('div', { class: 'bk-gh' }, 'Other types (그 밖의 유형)'),
-    h('div', { class: 'bk-cl' }, [
-      catBtn('__PT', 'Passthrough (전달 자금)', '', 'passthrough 전달 자금 pass'),
-      catBtn('__TR', 'Transfer (이체)', '', 'transfer 이체')]),
-    xrow);
-  const grid = h('div', { class: 'bk-cats', id: 'bk-cats' }, [other].concat(categoryGroups(st.data.accounts).map((g) => h('div', { class: 'bk-grp' },
-    h('div', { class: 'bk-gh ' + (L.GROUP_CLASS[g.key] || '') }, g.label),
-    h('div', { class: 'bk-cl' }, g.list.map((a) => catBtn(String(a.account_id), L.accLabel(a), L.GROUP_CLASS[g.key] || '', (String(a.name) + ' ' + String(a.name_ko || '')).toLowerCase())))))));
-  remBox.hidden = true;
-  const n = ctx.selected.size;
-  const close = sheet(api, 'Change category (카테고리 바꾸기)', n + ' selected (' + n + '건 선택) · splits are skipped (나눈 거래는 건너뜀)',
-    h('div', null, find, grid),
+  }
+  applyBtn.addEventListener('click', async () => {
+    applyBtn.disabled = true;
+    let plan;
+    try { plan = planChange(items, ctx.selected, target(), st.d.accMap, L.nowIso(), opts()); } catch (e) { api.toast(e.message || String(e)); applyBtn.disabled = false; return; }
+    const rules = remember && plan.remember.length ? rulesFromRemember(plan.remember, st.data.rules || [], L.nowIso()) : [];
+    if (!plan.changed && !rules.length) { api.toast('Nothing to change (바꿀 것이 없습니다)'); applyBtn.disabled = false; return; }
+    const { puts, order } = batchOf(plan, rules, false);
+    try { await sync.saveBatch(puts, order); } catch (e) { api.toast('Could not save (저장하지 못했습니다): ' + (e.message || e)); applyBtn.disabled = false; return; }
+    close();
+    ctx.selected.clear(); ctx.onDone(true);
+    await reloadAll(api);
+    api.toast('Changed (변경) ' + plan.changed + ' (' + plan.changed + '건)' + (rules.length ? ' · rules ' + rules.length + ' (규칙 ' + rules.length + ')' : '') + (plan.skipped.length ? ' · skipped ' + plan.skipped.length + ' (건너뜀): ' + skipSummary(plan.skipped) : ''));
+  });
+  drawBody(); refresh();
+  const close = sheet(api, 'Change type & category (종류 · 카테고리 바꾸기)', n + ' selected (' + n + '건 선택) · bank amounts stay the same (은행 금액은 그대로)',
+    h('div', null, tabsEl, note, findBox, body),
     h('div', { class: 'bk-foot' }, preview, remBox, h('div', { class: 'btnrow' }, applyBtn, h('button', { type: 'button', class: 'btn secondary', onclick: () => close() }, 'Cancel (취소)'))));
 }
 
@@ -436,7 +544,7 @@ function openPass(api, ctx) {
       hasChurch ? opt('bk-pass-church', 'people', 'Turn on — church (켜기 · 교회)', 'Church money you collect or pay out (교회 돈)',
         async () => { close(); await run(api, ctx, { special: 'PASSTHROUGH', passKind: 'CHURCH' }, { label: 'Passthrough on — church (교회 전달 자금)' }); }) : null,
       opt('bk-pass-off', 'tag', 'Turn off (끄기)', 'Back to spending or income — pick the category next (다시 지출·수입으로 · 다음에 카테고리 선택)',
-        () => { close(); openCategory(api, ctx); })));
+        () => { close(); openCategory(api, ctx, 'EXPENSE'); })));
   return close;
 }
 

@@ -43,3 +43,36 @@ q = B.planBulk([pt], [pt.txn.txn_id], { categoryId: '5110' }, accMap, now, {});
 const off = apply(pt, q);
 eq([off.desc.kind, L.truthy(off.txn.is_passthrough)], ['EXPENSE', false], 'passthrough off → spending');
 console.log('bulk-toggles tests passed (' + n + ' checks)');
+
+// ───── 종류 · 카테고리 바꾸기 (planChange) ─────
+{
+  let m = 0;
+  const ok = (a, b, msg) => { m++; eq(a, b, msg); };
+  accounts.push(acc('2010', 'Visa', 'LIABILITY', { subtype: 'CREDIT_CARD' })); accMap.set('2010', accounts[accounts.length - 1]);
+  const t2 = mk({ kind: 'TRANSFER', fromId: '1010', toId: '2010', amountText: '50', merchant: 'Payment' });
+  const spend = mk({ kind: 'EXPENSE', fromId: '1010', categoryId: '5110', amountText: '30', merchant: 'Costco' });
+  const deposit = mk({ kind: 'INCOME', toId: '1010', categoryId: '4010', amountText: '200', merchant: 'E-transfer in' });
+  // 이체 → 지출 (보낸 쪽 계좌에서 나간 돈)
+  let c = B.planChange([t2], [t2.txn.txn_id], { kind: 'EXPENSE', categoryId: '5110' }, accMap, now, {});
+  let r = apply(t2, c);
+  ok([r.desc.kind, r.desc.flow, bal(r, '1010'), bal(r, '5110')], ['EXPENSE', 'out', -50, 50], 'transfer → spending, chequing still −50');
+  // 지출 → 이체
+  c = B.planChange([spend], [spend.txn.txn_id], { kind: 'TRANSFER', accountId: '2010' }, accMap, now, {});
+  r = apply(spend, c);
+  ok([r.desc.kind, bal(r, '1010')], ['TRANSFER', -30], 'spending → transfer, chequing still −30');
+  // 지출(나간 돈) → 수입: 건너뜀
+  c = B.planChange([spend], [spend.txn.txn_id], { kind: 'INCOME', categoryId: '4010' }, accMap, now, {});
+  ok([c.changed, c.skipped[0].reason], [0, 'direction'], 'money out cannot become income');
+  // 수입(들어온 돈) → 환불
+  c = B.planChange([deposit], [deposit.txn.txn_id], { kind: 'REFUND', categoryId: '5110' }, accMap, now, {});
+  r = apply(deposit, c);
+  ok([r.desc.kind, r.desc.flow, bal(r, '1010'), bal(r, '5110')], ['EXPENSE', 'in', 200, -200], 'income → refund of groceries, chequing still +200');
+  // 수입 → 전달 자금 (교회)
+  c = B.planChange([deposit], [deposit.txn.txn_id], { kind: 'PASSTHROUGH', passKind: 'CHURCH' }, accMap, now, {});
+  r = apply(deposit, c);
+  ok([r.desc.kind, r.desc.passKind, bal(r, '1010')], ['PASSTHROUGH', 'CHURCH', 200], 'income → church passthrough');
+  // 여러 종류 한꺼번에 → 지출: 지출은 카테고리만, 이체는 종류까지
+  c = B.planChange([spend, t2], [spend.txn.txn_id, t2.txn.txn_id], { kind: 'EXPENSE', categoryId: '5110' }, accMap, now, {});
+  ok(c.changed, 1, 'mixed: spending already groceries (no change) + transfer converted');
+  console.log('planChange checks passed (' + m + ')');
+}

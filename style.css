@@ -2119,11 +2119,13 @@ html[data-layout="tablet"] body:has(#bk-bar) .toast, html[data-layout="desktop"]
 .bk-gh::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--grp, var(--line-strong)); }
 .bk-cl { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
 .bk-cat {
-  min-height: 46px; padding: 6px 12px 6px 14px; text-align: left; border-radius: 12px; cursor: pointer; font-size: 0.88rem; font-weight: 500;
-  border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); box-shadow: inset 4px 0 0 var(--grp, var(--line-strong));
+  min-height: 46px; padding: 6px 12px; text-align: left; border-radius: 4px; cursor: pointer; font-size: 0.88rem; font-weight: 500;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
+  display: flex; align-items: center; gap: 8px;
 }
+.bk-cat::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--grp, var(--line-strong)); }
 .bk-cat:hover { border-color: var(--line-strong); }
-.bk-cat[aria-pressed="true"] { border-color: var(--green); background: var(--tint); box-shadow: inset 4px 0 0 var(--grp, var(--green)), 0 0 0 1px var(--green); font-weight: 500; }
+.bk-cat[aria-pressed="true"] { border-color: var(--green); background: var(--tint); color: var(--ink); font-weight: 600; }
 .bk-foot { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 10px; }
 .bk-prev { font-size: 0.9rem; color: var(--ink-2); min-height: 1.4em; }
 .bk-prev b { color: var(--ink); }
@@ -2558,3 +2560,7 @@ input.pe-in.mine { border-color: var(--green); background: var(--tint); }
 .bk-opt .ic { color: var(--green-ink); margin-top: 2px; flex: none; }
 .bk-opt b { display: block; font-weight: 600; }
 .bk-opt small { display: block; color: var(--muted); font-size: 0.84rem; margin-top: 2px; line-height: 1.4; }
+
+/* 종류 · 카테고리 바꾸기 창 */
+.bk-types { margin: 4px 0 8px; display: flex; flex-wrap: wrap; max-width: 100%; overflow: visible; border-radius: 22px; }
+.bk-tnote { margin: 0 0 10px; }
