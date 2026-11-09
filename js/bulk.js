@@ -417,3 +417,60 @@ function openMemo(api, ctx) {
       h('button', { type: 'button', class: 'btn', id: 'bk-memo-add', onclick: async () => { const v = inp.value.trim(); if (!v) { inp.focus(); return; } await run(api, ctx, { memoAppend: v }, { label: 'Memo added (메모 추가)' }); close(); } }, 'Apply (적용)'),
       h('button', { type: 'button', class: 'btn secondary', onclick: () => close() }, 'Cancel (취소)')));
 }
+
+// ───────── 한 건 바로 고치기 (거래 탭 · 상세 패널에서 공통) ─────────
+
+/** 거래 한 건이 누구 몫인지: 'Patrick' 같은 한 사람, 나눈 줄의 소유자가 서로 다르면 'MIXED' */
+export function ownerOfItem(it) {
+  const t = it.txn;
+  const live = (it.ps || []).filter((p) => !L.truthy(p.deleted) && String(p.owner || '').trim());
+  const base = String(t.owner || '').trim() || 'Joint';
+  const set = new Set(live.map((p) => String(p.owner).trim()));
+  if (it.desc && it.desc.split && it.desc.lines) it.desc.lines.forEach((l) => set.add(String(l.owner || base).trim() || base));
+  if (set.size > 1) return 'MIXED';
+  return set.size === 1 ? Array.from(set)[0] : base;
+}
+
+/** 거래 한 건에 patch({ owner } 등)를 적용해 저장하고 다시 그립니다. 성공하면 true */
+export async function patchOne(api, it, patch, label) {
+  const st = api.state;
+  const id = String(it.txn.txn_id);
+  let plan;
+  try { plan = planBulk([it], [id], patch, st.d.accMap, L.nowIso(), { lineItems: st.data.lineItems || [] }); } catch (e) { api.toast(e.message || String(e)); return false; }
+  if (!plan.changed) { api.toast('Nothing to change (바꿀 것이 없습니다)' + (plan.skipped.length ? ': ' + skipSummary(plan.skipped) : '')); return false; }
+  const { puts, order } = batchOf(plan, [], false);
+  try { await sync.saveBatch(puts, order); } catch (e) { api.toast('Could not save (저장하지 못했습니다): ' + (e.message || e)); return false; }
+  const da = api.drillApi ? api.drillApi() : null;
+  const rl = api.reload || (da && da.reload);
+  if (rl) await rl();
+  if (api.rerender) api.rerender(); else if (api.renderBody) api.renderBody(true);
+  if (label) api.toast(label);
+  return true;
+}
+
+/**
+ * 소유자 바로 바꾸기 (한 건). 줄마다 소유자가 다른 나눈 거래는 줄 편집 화면을 엽니다.
+ * api: { h, state, toast, reload?|drillApi?, rerender?|renderBody?, openForm }
+ */
+export function pickOwner(api, it) {
+  const { h } = api;
+  const cur = ownerOfItem(it);
+  if (cur === 'MIXED') { api.openForm(it.txn.txn_id, { startSplit: true }); return; }
+  const owners = (CONFIG.OWNERS || ['Patrick', 'Ms Kim', 'Joint']);
+  const name = it.txn.merchant || it.txn.memo || (it.desc && it.desc.categoryName) || '';
+  const close = sheet(api, 'Who is this for? (누구 거래인가요?)', name + ' · ' + L.fmtNumber(Math.abs(L.num(it.txn.total_cad)), 'CAD'),
+    h('div', { class: 'bk-owners', id: 'own-pick' }, owners.map((o) => h('button', {
+      type: 'button', class: 'bk-owner' + (o === cur ? ' on' : ''), 'data-owner': o, 'aria-pressed': String(o === cur),
+      onclick: async () => {
+        if (o === cur) { close(); return; }
+        close();
+        await patchOne(api, it, { owner: o }, 'Owner: ' + ownerLabel(o) + ' (소유자 변경)');
+      }
+    }, icon('people', 22), h('span', null, ownerLabel(o))))));
+  return close;
+}
+
+/** 거래 나누기: 영수증 항목이 있으면 항목별 편집(카테고리 · 소유자), 없으면 거래 입력 창을 나누기 상태로 엽니다 */
+export function splitTxn(api, it) {
+  api.openForm(it.txn.txn_id, { startSplit: true });
+}

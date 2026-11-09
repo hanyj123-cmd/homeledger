@@ -10,7 +10,7 @@ import * as receiptui from './receiptui.js';
 import * as RV from './receiptview.js';
 import { openRemember } from './rememberui.js';
 import * as X from './xfermatch.js';
-import { planBulk, batchOf, sheet as bulkSheet, skipSummary } from './bulk.js';
+import { planBulk, batchOf, sheet as bulkSheet, skipSummary, pickOwner, splitTxn, ownerOfItem } from './bulk.js';
 
 let cur = null;            // { api, spec, picked:Set, pickMode }
 let dock = null;           // { el, fallback }  (아이패드 전용)
@@ -172,6 +172,8 @@ function build() {
       h('div', { class: 'am' + (r.v < 0 ? ' neg' : '') }, spec.mode === 'acct' && !simple ? h('span', { class: 'ro' }, sign + fmt(Math.abs(r.v))) : amtEl),
       h('div', { class: 'ed' },
         catSelect(it),
+        ownBtn(it, h),
+        (dsc.kind === 'EXPENSE' || dsc.kind === 'INCOME') ? h('button', { type: 'button', class: 'rowbtn sp', 'aria-label': dsc.split ? 'Edit split (나눈 줄 고치기)' : 'Split (나누기)', title: dsc.split ? 'Edit split (나눈 줄 고치기)' : 'Split by receipt items or people (영수증 · 사람별로 나누기)', onclick: () => splitTxn(api, it) }, icon('split', 20)) : null,
         h('input', {
           type: 'text', class: 'dp-memo', placeholder: 'Memo (메모)', value: t.memo || '', 'aria-label': 'Memo (메모)',
           onchange: (e) => edit(it, { memo: e.target.value }, false)
@@ -312,6 +314,13 @@ function buildTransferReview() {
       h('span', { class: 'xf-amt' }, fmt(Math.abs(L.num(it.txn.total_cad)))))));
   }
   return h('div', { class: 'dp xf-review', 'data-key': spec.key }, h('div', { class: 'dp-grip' }), head, list);
+}
+
+// 소유자 버튼 (누르면 바로 바꾸기)
+function ownBtn(it, h) {
+  const o = ownerOfItem(it);
+  const lab = o === 'MIXED' ? 'Split owners (나눔)' : L.ownerLabel(o);
+  return h('button', { type: 'button', class: 'own-chip btn-like', 'data-own': it.txn.txn_id, 'aria-label': 'Owner (소유자): ' + lab + ' — change (바꾸기)', title: 'Change owner (소유자 바꾸기)', onclick: () => pickOwner(cur.api, it) }, icon('people', 14), h('span', null, lab));
 }
 
 // 나눈 거래: 줄마다 카테고리 · 소유자 · 메모 · 금액 (이 상세에 해당하는 줄은 굵게)

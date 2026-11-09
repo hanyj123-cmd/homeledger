@@ -711,6 +711,12 @@ export function openForm(api, txnId, defaults) {
   }
 
   draw();
+  // "나누기" 버튼으로 열었으면 바로 나누기 화면으로 (이미 나눈 거래는 그대로 열림)
+  if (existing && defaults && defaults.startSplit) {
+    if (canSplit() && !f.split) startSplit();
+    const g = sheet.querySelector('.txf-splitgrp');
+    if (g && g.scrollIntoView) { try { g.scrollIntoView({ block: 'start' }); } catch (e) { /* ignore */ } }
+  }
   if (!existing) {
     const a = $('f-amount');
     // 폰에서는 창이 다 올라온 뒤에 키보드를 띄워야 화면이 덜 흔들립니다

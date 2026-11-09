@@ -4,7 +4,7 @@ import { icon } from './icons.js';
 import { layoutOf } from './layout.js';
 import * as drill from './drill.js';
 import { incomeStatement } from './reports.js';
-import { bulkBar } from './bulk.js';
+import { bulkBar, pickOwner, splitTxn, ownerOfItem } from './bulk.js';
 import * as RV from './receiptview.js';
 import * as M from './meta.js';
 
@@ -377,6 +377,34 @@ export function render(api) {
     }, icon('camera', 16));
   }
 
+  // 소유자 칩: 누르면 바로 바꾸기 (줄 버튼 안이라 span + role=button)
+  function tapKeys(fn) {   // function 선언: redraw() 가 이 줄보다 먼저 불려도 안전 (끌어올려짐)
+    return {
+      onclick: (e) => { if (bk.on) return; e.stopPropagation(); e.preventDefault(); fn(); },
+      onkeydown: (e) => { if (!bk.on && (e.key === 'Enter' || e.key === ' ')) { e.stopPropagation(); e.preventDefault(); fn(); } },
+      onpointerdown: (e) => { e.stopPropagation(); }
+    };
+  }
+  function ownChip(it) {
+    const o = ownerOfItem(it);
+    const mixed = o === 'MIXED';
+    const lab = mixed ? 'Split owners (나눔)' : L.ownerLabel(o);
+    return h('span', Object.assign({
+      class: 'own-chip' + (mixed ? ' mixed' : '') + (o === 'Joint' ? ' joint' : ''), role: 'button', tabindex: bk.on ? '-1' : '0', 'data-own': it.txn.txn_id,
+      'aria-label': 'Owner (소유자): ' + lab + ' — tap to change (눌러서 바꾸기)', title: 'Change owner (소유자 바꾸기)'
+    }, tapKeys(() => pickOwner(api, it))), icon('people', 14), h('span', null, lab));
+  }
+  // 나누기 버튼: 영수증 항목이 있으면 항목별(카테고리 · 소유자) 편집, 없으면 줄 나누기 화면
+  function splitBtn(it) {
+    const k = it.desc.kind;
+    if (k !== 'EXPENSE' && k !== 'INCOME') return null;
+    const done = !!it.desc.split;
+    return h('span', Object.assign({
+      class: 'row-split' + (done ? ' on' : ''), role: 'button', tabindex: bk.on ? '-1' : '0', 'data-split': it.txn.txn_id,
+      'aria-label': done ? 'Edit split (나눈 줄 고치기)' : 'Split (나누기)', title: done ? 'Edit split (나눈 줄 고치기)' : 'Split by receipt items or people (영수증 · 사람별로 나누기)'
+    }, tapKeys(() => splitTxn(api, it))), icon('split', 16), h('span', { class: 'rs-t' }, done ? 'Split ' + it.desc.split + ' (나눔)' : 'Split (나누기)'));
+  }
+
   function rowTitle(text, id, cls) {
     const rc = rcBtn(id);
     return rc ? h('div', { class: (cls || 'row-title') + ' has-rc' }, h('span', { class: 'rt' }, text), rc) : h('div', { class: cls || 'row-title' }, text);
@@ -398,7 +426,8 @@ export function render(api) {
       bk.on ? ckMark() : null,
       h('div', { class: 'row-main' },
         rowTitle(title, t.txn_id),
-        h('div', { class: 'row-sub' }, sub.filter(Boolean).join(' · '))),
+        h('div', { class: 'row-sub' }, sub.filter(Boolean).join(' · ')),
+        h('div', { class: 'row-acts' }, ownChip(it), splitBtn(it))),
       h('div', { class: 'row-right' },
         h('div', { class: 'row-amt ' + cls }, arrow + ' ' + fmt(amt)),
         foreign ? h('div', { class: 'row-fx' }, prov + fmt(L.num(t.total_orig), t.currency)) : null,
@@ -421,7 +450,7 @@ export function render(api) {
       type: 'checkbox', id: 'bk-head-ck', 'aria-label': 'Select all shown (보이는 것 모두 선택)',
       onclick: (e) => { e.stopPropagation(); const all = shown.length && shown.every((id) => bk.sel.has(id)); if (all) shown.forEach((id) => bk.sel.delete(id)); else shown.forEach((id) => bk.sel.add(id)); paintSel(); }
     })) : null;
-    const tr = h('tr', null, headCk, th('Date', '날짜'), th(head[1], '내역'), wide ? th('Category', '카테고리') : null, wide && !a ? th('Account', '계좌') : null, th('Withdrawals', '출금', true), th('Deposits', '입금', true), a ? th('Balance', '잔액', true) : (wide ? null : th('Account', '계좌')));
+    const tr = h('tr', null, headCk, th('Date', '날짜'), th(head[1], '내역'), wide ? th('Category', '카테고리') : null, wide ? th('Owner', '소유자') : null, wide && !a ? th('Account', '계좌') : null, th('Withdrawals', '출금', true), th('Deposits', '입금', true), a ? th('Balance', '잔액', true) : (wide ? null : th('Account', '계좌')));
     const tb = h('tbody');
     const CAP = 300;
     let lastDay = null;
@@ -437,6 +466,7 @@ export function render(api) {
       const descCell = h('td', { class: 'desc' },
         rowTitle(t.merchant || t.memo || dsc.categoryName, t.txn_id, 't'),
         !wide ? h('div', { class: 'm' }, catEl) : null,
+        wide ? null : h('div', { class: 'row-acts' }, ownChip(it), splitBtn(it)),
         t.merchant && t.memo ? h('div', { class: 'm' }, t.memo) : null,
         foreign ? h('div', { class: 'm' }, fmt(L.num(t.total_orig), t.currency)) : null);
       const trEl = h('tr', { 'data-id': t.txn_id, class: bk.on ? 'bk-row' : '', onclick: (e) => tapRow(e, t.txn_id) },
@@ -444,6 +474,7 @@ export function render(api) {
         h('td', { class: 'd' }, q ? fmtDate(t.date) : shortDate(t.date)),
         descCell,
         wide ? h('td', null, catEl) : null,
+        wide ? h('td', { class: 'own' }, h('div', { class: 'own-cell' }, ownChip(it), splitBtn(it))) : null,
         wide && !a ? h('td', { class: 'd' }, dsc.accountName) : null,
         h('td', { class: 'r' }, c.out ? h('span', { class: 'amt-out' }, fmt(c.out)) : c.move ? h('span', { class: 'amt-move', title: 'Transfer (이체)' }, '⇄ ' + fmt(c.move)) : ''),
         h('td', { class: 'r' }, c.inn ? h('span', { class: 'amt-in' }, fmt(c.inn)) : ''),

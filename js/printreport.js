@@ -251,7 +251,7 @@ const tbl = (cls, cols, head, body, foot) => '<table class="ft ' + (cls || '') +
 const th = (cells, left) => '<tr>' + cells.map((c, i) => '<th' + (i >= (left || 1) ? ' class="n"' : '') + '>' + c + '</th>').join('') + '</tr>';
 
 function section(id, num, title, sub, body, cls) {
-  return '<section class="sec ' + (cls || '') + '" id="sec-' + id + '"><header class="sh"><span class="sn">' + String(num).padStart(2, '0') + '</span><h2>' + biHead(title) + '</h2>' + (sub ? '<span class="ss">' + sub + '</span>' : '') + '</header>' + body + '</section>';
+  return '<section class="sec ' + (cls || '') + '" id="sec-' + id + '"><header class="sh"><span class="sn">' + num + '.</span><h2>' + biHead(title) + '</h2>' + (sub ? '<span class="ss">' + sub + '</span>' : '') + '</header>' + body + '</section>';
 }
 
 function emptyNote(en) { return '<p class="empty">' + t(en) + '</p>'; }
@@ -259,19 +259,28 @@ function emptyNote(en) { return '<p class="empty">' + t(en) + '</p>'; }
 // 1) 표지 + 2) 요약
 const periodTitle = (ym) => { const [y, m] = ymParts(ym); const en = MONTHS_LONG[m - 1] + ' ' + y, ko = y + '년 ' + m + '월'; const l = lang(); return l === 'en' ? esc(en) : l === 'ko' ? esc(ko) : esc(en) + ' <span class="hk">' + esc(ko) + '</span>'; };
 function coverBlock(D, F, sections) {
-  const lead = '<div class="cover"><div class="brand"><span class="logo">HL</span><span class="bn">HOME LEDGER</span><span class="conf">' + t('Private & confidential (개인 · 대외비)') + '</span></div>'
-    + '<h1>' + biHead('Monthly Financial Report (월간 재무 보고서)') + '</h1>'
-    + '<div class="period">' + periodTitle(D.ym) + '</div>'
-    + '<dl class="meta">'
-    + '<div><dt>' + t('Household (가구)') + '</dt><dd>' + esc(D.household) + '</dd></div>'
-    + '<div><dt>' + t('Reporting period (보고 기간)') + '</dt><dd>' + esc(dateNum(D.ym + '-01')) + ' – ' + esc(dateNum(D.bs.asOf)) + '</dd></div>'
-    + '<div><dt>' + t('Year to date (연간 누계)') + '</dt><dd>' + esc(monthCol(D.ytd[0])) + ' – ' + esc(monthCol(D.ym)) + '</dd></div>'
-    + '<div><dt>' + t('Prepared (작성일)') + '</dt><dd>' + esc(dateNum(D.today)) + '</dd></div>'
-    + '<div><dt>' + t('Currency (통화)') + '</dt><dd>CAD' + (F.whole ? ' · ' + t('whole dollars (달러 단위)') : '') + '</dd></div>'
+  // 업무 메모 형식: 받는 사람 · 보낸 곳 · 날짜 · 제목 → 목적 한 문단 → 차례
+  const c = D.isCur;
+  const [y, m] = ymParts(D.ym);
+  const purpose = bi(
+    'This memo reports the household\'s finances for ' + MONTHS_LONG[m - 1] + ' ' + y + ': income and spending, the balance sheet at month-end, budget, debt and the people and merchants behind the numbers. '
+      + (c.income || c.expense ? 'In short, ' + F.money(c.income) + ' came in, ' + F.money(c.expense) + ' went out' + (c.income > 0 ? ' and ' + (c.net >= 0 ? F.money(c.net) + ' was kept' : F.money(-c.net) + ' more was spent than earned') : '') + '; net worth stands at ' + F.money(D.bs.net) + '.' : 'No income or spending has been recorded for the month yet; net worth stands at ' + F.money(D.bs.net) + '.'),
+    y + '년 ' + m + '월 가계 재무 현황을 정리한 메모입니다. 수입 · 지출, 월말 재무상태, 예산, 부채, 사람 · 업체별 내역을 담았습니다. '
+      + (c.income || c.expense ? '요약하면 수입 ' + F.money(c.income) + ', 지출 ' + F.money(c.expense) + (c.income > 0 ? (c.net >= 0 ? ', 남은 돈 ' + F.money(c.net) : ', 부족 ' + F.money(-c.net)) : '') + ' · 순자산 ' + F.money(D.bs.net) + '.' : '이 달에는 아직 수입 · 지출 기록이 없습니다 · 순자산 ' + F.money(D.bs.net) + '.'));
+  const row = (k, v) => '<div><dt>' + t(k) + '</dt><dd>' + v + '</dd></div>';
+  return '<div class="memo">'
+    + '<div class="mtop"><span class="logo">HL</span><span class="bn">Home Ledger</span><span class="conf">' + t('Private & confidential (개인 · 대외비)') + '</span></div>'
+    + '<h1>' + biHead('Memorandum (메모)') + '</h1>'
+    + '<dl class="mh">'
+    + row('To (받는 사람)', esc(D.household))
+    + row('From (보낸 곳)', t('Home Ledger, household books (우리집 장부)'))
+    + row('Date (날짜)', esc(dateLong(D.today)))
+    + row('Re (제목)', biHead('Monthly financial report (월간 재무 보고서)') + ' — ' + periodTitle(D.ym))
     + '</dl>'
-    + '<ol class="toc">' + sections.map((s, i) => '<li><span>' + String(i + 1).padStart(2, '0') + '</span>' + t(s.title) + '</li>').join('') + '</ol>'
+    + '<p class="purpose">' + purpose + '</p>'
+    + '<div class="contents"><span class="cl">' + t('Contents (차례)') + '</span><ol>' + sections.map((s) => '<li>' + t(s.title) + '</li>').join('') + '</ol>'
+    + '<span class="basis">' + t('CAD (캐나다 달러)') + (F.whole ? ' · ' + t('whole dollars (달러 단위)') : '') + ' · ' + t('Period (기간)') + ' ' + esc(dateNum(D.ym + '-01')) + ' – ' + esc(dateNum(D.bs.asOf)) + '</span></div>'
     + '</div>';
-  return lead;
 }
 
 function observations(D, F) {
@@ -564,7 +573,7 @@ const CSS = (footL) => `
   @bottom-left { content: "${footL}"; font: 7pt -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; color: #6a737d; vertical-align: top; padding-top: 6pt; }
   @bottom-right { content: counter(page) " / " counter(pages); font: 7pt -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; color: #6a737d; vertical-align: top; padding-top: 6pt; }
 }
-.hlr { --g: #007a33; --g2: #00561f; --gl: #e8f3ea; --ink: #1d232a; --mu: #5f6b76; --rule: #cfd6dc; --rule2: #e6eaee; --good: #18794e; --bad: #c0362c; --warn: #b7791f; --fill: #f5f7f8;
+.hlr { --g: #007a33; --g2: #00561f; --gl: #e8f3ea; --ink: #1d232a; --mu: #5f6b76; --rule: #cfd6dc; --rule2: #e6eaee; --good: #18794e; --bad: #c0362c; --warn: #b7791f; --fill: #f5f7f8; --serif: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, "Noto Serif KR", "AppleMyungjo", serif;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", Roboto, Helvetica, Arial, sans-serif;
   color: var(--ink); background: #fff; font-size: 8.6pt; line-height: 1.38; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-variant-numeric: tabular-nums lining-nums; }
 .hlr * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -574,40 +583,47 @@ const CSS = (footL) => `
 .hlr .good { color: var(--good); } .hlr .bad { color: var(--bad); } .hlr .warnc { color: var(--warn); }
 .hlr .na, .hlr .zero, .hlr .flat { color: #a3acb5; }
 .hlr .pp { visibility: hidden; }
-/* 표지 */
-.hlr .cover { border-top: 5pt solid var(--g); padding: 12pt 0 10pt; border-bottom: .75pt solid var(--rule); margin-bottom: 12pt; display: grid; grid-template-columns: 1fr auto; column-gap: 18pt; }
-.hlr .brand { grid-column: 1 / -1; display: flex; align-items: center; gap: 7pt; font-size: 7.4pt; letter-spacing: .14em; color: var(--g2); font-weight: 700; margin-bottom: 8pt; }
-.hlr .logo { display: inline-grid; place-items: center; width: 17pt; height: 17pt; border-radius: 3pt; background: var(--g); color: #fff; font-size: 7.4pt; letter-spacing: 0; }
-.hlr .conf { margin-left: auto; font-weight: 600; color: var(--mu); letter-spacing: .06em; text-transform: uppercase; font-size: 6.6pt; }
-.hlr h1 { grid-column: 1; font-size: 18pt; line-height: 1.15; font-weight: 700; letter-spacing: -.01em; color: #111; }
-.hlr .period { grid-column: 1; font-size: 13pt; color: var(--g); font-weight: 600; margin-top: 3pt; }
-.hlr .meta { grid-column: 1; display: flex; flex-wrap: wrap; gap: 4pt 20pt; margin-top: 10pt; }
-.hlr .meta dt { font-size: 6.6pt; text-transform: uppercase; letter-spacing: .08em; color: var(--mu); font-weight: 600; }
-.hlr .meta dd { margin: 1pt 0 0; font-weight: 600; font-size: 8.6pt; }
-.hlr .toc { grid-column: 2; grid-row: 2 / span 3; list-style: none; border-left: .75pt solid var(--rule); padding-left: 12pt; font-size: 7.6pt; color: var(--mu); align-self: start; }
-.hlr .toc li { padding: 1.2pt 0; white-space: nowrap; }
-.hlr .toc span { display: inline-block; width: 15pt; color: var(--g); font-weight: 700; }
+/* 메모 머리 */
+.hlr .memo { padding: 0 0 12pt; margin-bottom: 14pt; border-bottom: 1.2pt solid var(--ink); }
+.hlr .mtop { display: flex; align-items: center; gap: 7pt; font-size: 8pt; color: var(--g2); font-weight: 700; padding-bottom: 8pt; border-bottom: .75pt solid var(--rule); }
+.hlr .logo { display: inline-grid; place-items: center; width: 17pt; height: 17pt; border-radius: 3pt; background: var(--g); color: #fff; font-size: 7.4pt; }
+.hlr .conf { margin-left: auto; font-weight: 600; color: var(--mu); font-size: 7.4pt; }
+.hlr h1 { font-family: var(--serif); font-size: 24pt; line-height: 1.1; font-weight: 600; color: #111; margin: 16pt 0 10pt; letter-spacing: -.005em; }
+.hlr .mh { display: grid; grid-template-columns: auto 1fr; column-gap: 14pt; row-gap: 3pt; font-size: 9.6pt; }
+.hlr .mh div { display: contents; }
+.hlr .mh dt { font-weight: 700; color: var(--ink); }
+.hlr .mh dd { margin: 0; }
+.hlr .mh .hk { font-size: .8em; }
+.hlr .purpose { font-family: var(--serif); font-size: 10pt; line-height: 1.55; margin-top: 12pt; padding-top: 10pt; border-top: .75pt solid var(--rule); max-width: 6.4in; }
+.hlr .purpose .ko { display: block; margin-top: 3pt; font-size: .9em; }
+.hlr .contents { margin-top: 10pt; font-size: 8pt; color: var(--mu); }
+.hlr .contents .cl { font-weight: 700; color: var(--ink); margin-right: 6pt; }
+.hlr .contents ol { display: inline; list-style: none; counter-reset: c; }
+.hlr .contents li { display: inline; counter-increment: c; margin-right: 9pt; white-space: nowrap; }
+.hlr .contents li:before { content: counter(c) ". "; color: var(--g2); font-weight: 700; }
+.hlr .contents .basis { display: block; margin-top: 3pt; }
 /* 섹션 */
 .hlr .sec { margin-top: 16pt; }
 .hlr .sec.pb { break-before: page; page-break-before: always; margin-top: 0; }
-.hlr .sh { display: flex; align-items: baseline; gap: 8pt; border-bottom: 1.4pt solid var(--g); padding-bottom: 3.5pt; margin-bottom: 8pt; break-after: avoid; page-break-after: avoid; }
-.hlr .sn { font-size: 9pt; font-weight: 800; color: var(--g); }
-.hlr h2 { font-size: 12.5pt; font-weight: 700; letter-spacing: -.005em; }
+.hlr .sh { display: flex; align-items: baseline; gap: 6pt; border-bottom: .75pt solid var(--ink); padding-bottom: 3.5pt; margin-bottom: 8pt; break-after: avoid; page-break-after: avoid; }
+.hlr .sn { font-family: var(--serif); font-size: 13.5pt; font-weight: 600; color: var(--g2); }
+.hlr h2 { font-family: var(--serif); font-size: 13.5pt; font-weight: 600; letter-spacing: 0; }
 .hlr .ss { margin-left: auto; font-size: 7.4pt; color: var(--mu); }
-.hlr h3 { font-size: 8.4pt; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--g2); margin: 10pt 0 5pt; break-after: avoid; page-break-after: avoid; }
+.hlr h3 { font-size: 8.4pt; font-weight: 700; letter-spacing: 0; color: var(--g2); margin: 10pt 0 5pt; break-after: avoid; page-break-after: avoid; }
 /* KPI */
 .hlr .kpis { display: grid; grid-template-columns: repeat(3, 1fr); border: .75pt solid var(--rule); border-radius: 4pt; overflow: hidden; break-inside: avoid; }
 .hlr .kpi { padding: 8pt 10pt 8pt; border-right: .75pt solid var(--rule2); border-bottom: .75pt solid var(--rule2); min-height: 52pt; }
 .hlr .kpi:nth-child(3n) { border-right: 0; } .hlr .kpi:nth-child(n+4) { border-bottom: 0; }
 .hlr .kpi.hero { background: var(--gl); }
-.hlr .kl { font-size: 6.8pt; text-transform: uppercase; letter-spacing: .07em; color: var(--mu); font-weight: 600; }
+.hlr .kl { font-size: 6.8pt; letter-spacing: 0; color: var(--mu); font-weight: 600; }
 .hlr .kv { font-size: 15pt; font-weight: 700; margin-top: 2pt; letter-spacing: -.01em; white-space: nowrap; }
 .hlr .kv small { font-size: 8pt; color: var(--mu); font-weight: 600; margin-left: 2pt; }
 .hlr .ks { font-size: 7.2pt; color: var(--mu); margin-top: 2pt; }
 .hlr .chg { font-weight: 600; white-space: nowrap; }
-.hlr .headline { margin-top: 9pt; padding: 7pt 10pt; background: var(--fill); border-left: 2.5pt solid var(--g); font-size: 8.6pt; break-inside: avoid; }
+.hlr .headline { margin-top: 9pt; padding: 7pt 10pt; background: var(--fill); font-family: var(--serif); font-size: 9.4pt; break-inside: avoid; }
 .hlr .two { display: grid; grid-template-columns: 1.08fr 1fr; gap: 16pt; margin-top: 2pt; }
 .hlr .obs ul, .hlr .tips ul { list-style: none; }
+.hlr .obs li { font-family: var(--serif); font-size: 9pt; }
 .hlr .obs li, .hlr .tips li { position: relative; padding: 2.6pt 0 2.6pt 11pt; border-bottom: .5pt solid var(--rule2); break-inside: avoid; }
 .hlr .obs li:before, .hlr .tips li:before { content: ""; position: absolute; left: 0; top: 6.4pt; width: 5pt; height: 5pt; border-radius: 50%; background: #9aa5b1; }
 .hlr li.o-good:before { background: var(--good); } .hlr li.o-bad:before { background: var(--bad); } .hlr li.o-warn:before { background: var(--warn); } .hlr li.o-n:before { background: var(--g); }
@@ -625,7 +641,7 @@ const CSS = (footL) => `
 .hlr table.ft { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 8pt; }
 .hlr .ft thead { display: table-header-group; }
 .hlr .ft tfoot { display: table-row-group; }
-.hlr .ft th { font-size: 6.7pt; text-transform: uppercase; letter-spacing: .05em; color: var(--mu); font-weight: 700; text-align: left; padding: 4pt 5pt 3.5pt; border-bottom: 1pt solid var(--ink); vertical-align: bottom; line-height: 1.25; }
+.hlr .ft th { font-size: 6.7pt; letter-spacing: 0; color: var(--mu); font-weight: 700; text-align: left; padding: 4pt 5pt 3.5pt; border-bottom: 1pt solid var(--ink); vertical-align: bottom; line-height: 1.25; }
 .hlr .ft th.n { text-align: right; }
 .hlr .ft td { padding: 2.4pt 5pt; border-bottom: .5pt solid var(--rule2); vertical-align: top; overflow: hidden; text-overflow: ellipsis; }
 .hlr .ft td.n { text-align: right; white-space: nowrap; }
@@ -633,7 +649,7 @@ const CSS = (footL) => `
 .hlr .ft tbody.g { break-inside: avoid; page-break-inside: avoid; }
 .hlr .ft tbody.tot { break-inside: avoid; page-break-inside: avoid; }
 .hlr .ft tr.ind td:first-child { padding-left: 14pt; }
-.hlr .ft tr.hd td { font-weight: 800; font-size: 7.6pt; text-transform: uppercase; letter-spacing: .06em; color: var(--g2); padding-top: 6pt; border-bottom: .75pt solid var(--rule); }
+.hlr .ft tr.hd td { font-weight: 800; font-size: 7.6pt; letter-spacing: 0; color: var(--g2); padding-top: 6pt; border-bottom: .75pt solid var(--rule); }
 .hlr .ft tr.grp td { font-weight: 700; background: var(--fill); border-bottom: .5pt solid var(--rule); }
 .hlr .ft tr.sub td { font-weight: 700; border-top: .75pt solid var(--ink); border-bottom: .75pt solid var(--rule); }
 .hlr .ft tr.net td { font-weight: 800; border-top: .75pt solid var(--ink); border-bottom: 2.2pt double var(--ink); background: var(--gl); font-size: 8.4pt; }
@@ -664,7 +680,7 @@ const CSS = (footL) => `
 .hlr .facts { display: grid; grid-template-columns: repeat(4, 1fr); border: .75pt solid var(--rule); border-radius: 3pt; margin-bottom: 8pt; break-inside: avoid; }
 .hlr .facts div { padding: 5pt 8pt; border-right: .75pt solid var(--rule2); }
 .hlr .facts div:last-child { border-right: 0; }
-.hlr .facts span, .hlr .pgrid span { display: block; font-size: 6.6pt; text-transform: uppercase; letter-spacing: .06em; color: var(--mu); font-weight: 600; }
+.hlr .facts span, .hlr .pgrid span { display: block; font-size: 6.6pt; letter-spacing: 0; color: var(--mu); font-weight: 600; }
 .hlr .facts b { font-size: 10pt; }
 .hlr .payoff { margin-top: 4pt; border: .75pt solid var(--rule); border-radius: 3pt; padding: 0 10pt 8pt; break-inside: avoid; }
 .hlr .pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6pt 14pt; }
@@ -689,7 +705,7 @@ const CSS = (footL) => `
 .hlr svg .dot { fill: #fff; stroke: #007a33; stroke-width: 1.4; } .hlr svg .dot.last { fill: #007a33; }
 .hlr svg .endl { font-weight: 700; fill: #1d232a; font-size: 10px; }
 /* 메모 */
-.hlr .note { border: .75pt solid var(--rule); border-left: 2.5pt solid var(--g); padding: 2pt 10pt 8pt; margin-top: 4pt; break-inside: avoid; }
+.hlr .note { border: .75pt solid var(--rule); padding: 2pt 10pt 8pt; margin-top: 4pt; break-inside: avoid; }
 .hlr .note h3 { margin-top: 6pt; }
 .hlr .disc { margin-top: 12pt; padding-top: 6pt; border-top: .75pt solid var(--rule); font-size: 7.2pt; color: var(--mu); break-inside: avoid; }
 .hlr .disc p { margin-bottom: 4pt; } .hlr .disc b { color: var(--ink); }
