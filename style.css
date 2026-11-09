@@ -2486,3 +2486,68 @@ html[data-layout="phone"] .row-split.on .rs-t, html:not([data-layout]) .row-spli
 .pr-opt { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface); cursor: pointer; }
 .pr-opt input { width: 20px; height: 20px; accent-color: var(--green); flex: none; }
 .pr-opt:has(input:checked) { background: var(--tint); border-color: var(--tint-line); }
+
+/* ═════════ v0.35 쉬운 예측 (올해 평균 → ± 조정) ═════════ */
+.pe-wrap { display: grid; gap: 16px; }
+.pe .pl-h { margin-bottom: 14px; }
+.pe-basis { font-size: 0.86rem; color: var(--muted); }
+.pe-sums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pe-sum { border: 1px solid var(--line); border-radius: 4px; padding: 12px 16px; background: var(--surface); }
+.pe-sum[data-k="year"] { background: var(--surface-2); }
+.pe-sum-h { font-weight: 600; font-size: 1rem; margin-bottom: 6px; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.pe-sum-h .ko { font-weight: 500; color: var(--muted); font-size: 0.86em; }
+.pe-sum-m { margin-left: auto; color: var(--muted); font-weight: 500; font-size: 0.82rem; }
+.pe-sum-r { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; font-size: 0.92rem; color: var(--ink-2); }
+.pe-sum-r b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pe-sum-r.net { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 7px; }
+.pe-chart { margin-top: 16px; }
+.pe-how { margin: 18px 0 8px; color: var(--ink-2); font-size: 0.92rem; }
+
+.pe-colhead, .pe-row, .pe-gh { display: grid; grid-template-columns: minmax(180px, 1.3fr) repeat(var(--pe-n, 3), minmax(0, 1fr)); gap: 12px; align-items: center; }
+.pe:has(.pe-row .pe-slot:nth-child(3):last-child) { --pe-n: 2; }
+.pe-colhead { padding: 8px 0; border-bottom: 1px solid var(--line-strong); font-weight: 600; font-size: 0.92rem; }
+.pe-colhead small { display: block; font-weight: 500; color: var(--muted); font-size: 0.78rem; }
+.pe-gh { padding: 14px 0 8px; border-bottom: 1px solid var(--line-strong); font-weight: 600; }
+.pe-gh .pe-gt { display: flex; justify-content: flex-end; gap: 6px; font-variant-numeric: tabular-nums; padding-right: 48px; }
+.pe-gh .pe-glab { display: none; color: var(--muted); font-weight: 500; font-size: 0.82rem; }
+.pe-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.pe-nm { font-weight: 600; }
+.pe-nm .en { font-weight: 400; color: var(--muted); font-size: 0.86em; }
+.pe-trend { display: flex; align-items: center; gap: 10px; margin-top: 4px; font-size: 0.84rem; color: var(--muted); }
+.pe-trend b { color: var(--ink-2); font-weight: 600; }
+.pe-bars rect { fill: var(--line-strong); }
+.pe-bars.inc rect { fill: color-mix(in srgb, var(--c1) 55%, transparent); }
+.pe-bars.exp rect { fill: color-mix(in srgb, var(--c2) 45%, transparent); }
+.pe-bars .avg { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 2 2; }
+.pe-slab { display: none; }
+.pe-ctl { display: flex; align-items: center; gap: 4px; }
+.pe-step { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--green-ink); font: inherit; font-size: 1.25rem; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background-color .15s ease; }
+.pe-step:hover { background: var(--tint); }
+.pe-step:active { transform: scale(0.94); }
+input.pe-in { min-width: 0; flex: 1 1 auto; width: 100%; min-height: 40px; height: 40px; padding: 0 8px; text-align: right; font-variant-numeric: tabular-nums; font-size: 1rem; font-weight: 500; }
+input.pe-in.mine { border-color: var(--green); background: var(--tint); }
+.pe-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; min-height: 20px; font-size: 0.78rem; flex-wrap: wrap; }
+.pe-diff { color: var(--muted); font-variant-numeric: tabular-nums; }
+.pe-diff.good { color: var(--in); font-weight: 600; } .pe-diff.bad { color: var(--out); font-weight: 600; }
+.pe-reset { border: 0; background: transparent; color: var(--green-ink); font: inherit; font-size: 0.78rem; text-decoration: underline; cursor: pointer; padding: 4px 2px; margin: -4px 0; }
+.pe-sofar { color: var(--muted); }
+.pe-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.pe-dirty { margin-right: auto; color: var(--warn-ink); font-size: 0.9rem; }
+.pe-more > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; color: var(--green-ink); }
+.pe-more[open] > summary { margin-bottom: 12px; }
+
+/* 폰 · 좁은 화면: 이름 아래에 이번 달 · 다음 달 · 남은 달 */
+@media (max-width: 760px) {
+  .pe-sums { grid-template-columns: minmax(0, 1fr); }
+  .pe-colhead { display: none; }
+  .pe-row { grid-template-columns: repeat(var(--pe-n, 3), minmax(0, 1fr)); gap: 8px; }
+  .pe-row .pe-name { grid-column: 1 / -1; }
+  .pe-slab { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 3px; }
+  .pe-gh { grid-template-columns: repeat(var(--pe-n, 3), minmax(0, 1fr)); }
+  .pe-gh .pe-gname { grid-column: 1 / -1; }
+  .pe-gh .pe-gt { justify-content: flex-start; padding-right: 0; flex-direction: column; gap: 0; }
+  .pe-gh .pe-glab { display: block; }
+  .pe-step { width: 36px; height: 36px; }
+  .pe-ctl { gap: 2px; }
+  input.pe-in { padding: 0 4px; font-size: 0.95rem; }
+}

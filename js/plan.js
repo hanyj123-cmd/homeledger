@@ -19,6 +19,7 @@ const S = {
   fc: { scope: 'all', cut: 10, inc: 0, cutText: '', incText: '', sel: null },
   ny: { start: null, scope: 'next12', incl: new Map(), edits: new Map(), month: '', confirming: false, done: null, basis: 'year' },
   bu: { sel: null, edits: new Map(), added: new Set() },
+  easy: { edits: new Map(), open: new Set(['수입']) },   // 쉬운 예측: 'cur|id' · 'next|id' · 'rest|id' → 금액(또는 null=평균으로)
   debt: { strategy: null, includeMortgage: false, extraDraft: null, target: '24' }
 };
 export const setTab = (t) => { if (t === 'fc' || t === 'ny' || t === 'debt') tab = t; };
@@ -126,10 +127,9 @@ export function render(api) {
   // 올해 남은 달을 내가 직접 입력해 두었으면(상향식) 이번 달 예상도 그 입력을 따릅니다
   const savedPlan = YP.readPlan(api.data.settings);
   let fc = ctx.fc;
-  if (L.monthOf(today) === state.month && !ctx.fc.done && savedPlan.cells[state.month] && Object.keys(savedPlan.cells[state.month]).length) {
-    const g0 = Number(meta.plan.growth);
-    const ol0 = YP.yearOutlook({ items: api.items, accMap: api.accMap, budgets: api.data.budgets || [], plan: savedPlan, today, growth: Number.isFinite(g0) ? g0 : 3 });
-    const t0 = ol0.monthTotals[state.month];
+  // 이번 달 예상은 언제나 예측 화면과 같은 숫자 (올해 평균 + 내가 조정한 값)
+  if (L.monthOf(today) === state.month && !ctx.fc.done) {
+    const t0 = YP.easyForecast({ items: api.items, accMap: api.accMap, plan: savedPlan, today }).totals.cur;
     if (t0) fc = Object.assign({}, ctx.fc, { projExpense: t0.expense, projIncome: t0.income, projNet: r2(t0.income - t0.expense), remaining: r2(Math.max(0, t0.expense - ctx.fc.actualExpense)) });
   }
   const inProg = L.monthOf(today) === state.month && !fc.done;
@@ -367,6 +367,160 @@ export function render(api) {
     return card;
   }
 
+
+  // ───────────────────────────────────── 쉬운 예측 (올해 평균 → ± 조정) ─────────────────────────────────────
+  function buildEasy() {
+    const card = h('section', { class: 'card pe', id: 'pe' });
+    const base = YP.easyForecast({ items: api.items, accMap: api.accMap, plan: savedPlan, today });
+    const planNow = () => YP.applyEasyEdits(savedPlan, base, S.easy.edits);
+    let md = YP.easyForecast({ items: api.items, accMap: api.accMap, plan: planNow(), today });
+    const hasRest = md.rest.length > 0;
+    const slots = [['cur', 'This month', '이번 달', md.curYm], ['next', 'Next month', '다음 달', md.nextYm]].concat(hasRest ? [['rest', 'Rest of year', '남은 달 · 매달', md.rest[0]]] : []);
+    const refs = { rows: new Map(), tot: {}, grp: new Map(), save: null, dirty: null, chart: null };
+    const lineOf = (id) => md.lines.find((l) => l.id === id);
+    const money = (v) => m0(v);
+    const signed = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + '$' + Math.abs(Math.round(v)).toLocaleString('en-US');
+    const isDirty = () => S.easy.edits.size > 0 && JSON.stringify(planNow().cells) !== JSON.stringify(savedPlan.cells);
+
+    function recompute() { md = YP.easyForecast({ items: api.items, accMap: api.accMap, plan: planNow(), today }); }
+    function setVal(slot, id, v) { S.easy.edits.set(slot + '|' + id, v === null ? null : Math.max(0, r2(v))); recompute(); paint(); }
+
+    // 올해 흐름 그래프 (실제 → 이번 달 · 다음 달 예상)
+    function chartOpts() {
+      const ms = md.trend.concat([md.curYm, md.nextYm]);
+      const t = (key) => md.trend.map((ym) => sum(md.lines.filter((l) => l.type === key).map((l) => (l.trend.find((x) => x.ym === ym) || { amount: 0 }).amount)));
+      const inc = t('INCOME').concat([md.totals.cur.income, md.totals.next.income]);
+      const exp = t('EXPENSE').concat([md.totals.cur.expense, md.totals.next.expense]);
+      return {
+        labels: ms.map(shortMon), fmt: m0, axisFmt: axisMoney, height: phone ? 180 : 210, forecastFrom: md.trend.length,
+        series: [{ key: 'in', name: 'Income (수입)', color: 'var(--c1)', values: inc }, { key: 'out', name: 'Spending (지출)', color: 'var(--c2)', values: exp }],
+        refLines: md.trend.length ? [{ value: md.totals.avg.expense, label: 'avg spending (평균 지출) ' + m0(md.totals.avg.expense) }] : []
+      };
+    }
+
+    // 줄마다 작은 막대: 평균에 쓴 달들의 금액 + 평균선
+    function miniBars(l) {
+      const vals = l.trend.map((x) => x.amount);
+      const W = Math.max(1, vals.length) * 7, H = 22, mx = Math.max(1, ...vals, l.avg);
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('width', String(W)); svg.setAttribute('height', String(H));
+      svg.setAttribute('class', 'pe-bars ' + (l.type === 'INCOME' ? 'inc' : 'exp')); svg.setAttribute('aria-hidden', 'true');
+      vals.forEach((v, i) => { const bh = Math.max(1, Math.round(v / mx * (H - 2))); const r = document.createElementNS(ns, 'rect'); r.setAttribute('x', String(i * 7)); r.setAttribute('y', String(H - bh)); r.setAttribute('width', '5'); r.setAttribute('height', String(bh)); r.setAttribute('rx', '1'); svg.append(r); });
+      const y = Math.round(H - l.avg / mx * (H - 2)) + 0.5;
+      const ln = document.createElementNS(ns, 'line'); ln.setAttribute('x1', '0'); ln.setAttribute('x2', String(W)); ln.setAttribute('y1', String(y)); ln.setAttribute('y2', String(y)); ln.setAttribute('class', 'avg'); svg.append(ln);
+      const tt = document.createElementNS(ns, 'title'); tt.textContent = l.trend.map((x) => shortMon(x.ym) + ' ' + m0(x.amount)).join(' · '); svg.append(tt);
+      return svg;
+    }
+
+    function cellEl(l, slot) {
+      const key = slot + '|' + l.id;
+      const lab = (l.name_ko || l.name) + ' — ' + slots.find((x) => x[0] === slot)[2];
+      const inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', class: 'pe-in', 'aria-label': lab + ' (금액)',
+        onfocus: (e) => { e.target.value = String(Math.round(lineOf(l.id)[slot].value)); e.target.select(); },
+        onchange: (e) => { const v = numIn(e.target.value); if (Number.isFinite(v) && v >= 0) setVal(slot, l.id, v); else paint(); },
+        onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); } });
+      const step = (dir) => { const cur = lineOf(l.id)[slot].value, st = l.step; const nv = dir > 0 ? Math.floor(cur / st) * st + st : Math.ceil(cur / st) * st - st; setVal(slot, l.id, Math.max(0, nv)); };
+      const dn = h('button', { type: 'button', class: 'pe-step', 'aria-label': lab + ' −' + l.step, onclick: () => step(-1) }, '−');
+      const up = h('button', { type: 'button', class: 'pe-step', 'aria-label': lab + ' +' + l.step, onclick: () => step(1) }, '+');
+      const diff = h('span', { class: 'pe-diff' });
+      const reset = h('button', { type: 'button', class: 'pe-reset', 'aria-label': lab + ' — reset to average (평균으로)', onclick: () => setVal(slot, l.id, null) }, 'avg (평균)');
+      const extra = slot === 'cur' && l.curActual > 0 ? h('span', { class: 'pe-sofar' }, 'so far (지금까지) ' + m0(l.curActual)) : null;
+      return { el: h('div', { class: 'pe-cell', 'data-slot': slot }, h('div', { class: 'pe-ctl' }, dn, inp, up), h('div', { class: 'pe-meta' }, diff, reset, extra)), inp, diff, reset };
+    }
+
+    function rowEl(l) {
+      const cells = {};
+      const kids = slots.map(([slot, en, ko]) => { const c = cellEl(l, slot); cells[slot] = c; return h('div', { class: 'pe-slot' }, h('span', { class: 'pe-slab' }, ko), c.el); });
+      refs.rows.set(l.id, cells);
+      return h('div', { class: 'pe-row', 'data-id': l.id },
+        h('div', { class: 'pe-name' },
+          h('div', { class: 'pe-nm' }, l.name_ko && l.name_ko !== l.name ? l.name_ko : l.name, l.name_ko && l.name_ko !== l.name ? h('span', { class: 'en' }, ' ' + l.name) : null),
+          h('div', { class: 'pe-trend' }, miniBars(l), h('span', null, 'avg (평균) ', h('b', null, m0(l.avg)), ' / mo'))),
+        kids);
+    }
+
+    function paint() {
+      md.lines.forEach((l) => {
+        const r = refs.rows.get(l.id); if (!r) return;
+        slots.forEach(([slot]) => {
+          const c = r[slot], v = l[slot];
+          if (document.activeElement !== c.inp) c.inp.value = Math.round(v.value).toLocaleString('en-US');
+          const d = v.value - l.avg;
+          const mine = v.plan !== null;
+          c.diff.textContent = Math.abs(d) < 0.5 ? (slot === 'rest' && v.mixed ? 'varies (달마다 다름)' : '= avg (평균)') : signed(d) + ' vs avg';
+          c.diff.className = 'pe-diff' + (Math.abs(d) < 0.5 ? '' : ((l.type === 'INCOME') === (d > 0) ? ' good' : ' bad'));
+          c.reset.hidden = !mine;
+          c.inp.classList.toggle('mine', mine);
+        });
+      });
+      const T = md.totals;
+      const put3 = (k, t) => { const r = refs.tot[k]; if (!r) return; r.inc.textContent = money(t.income); r.exp.textContent = money(t.expense); r.net.replaceChildren(arrow(t.net, true, (t.net < 0 ? '−' : '') + m0(Math.abs(t.net)).replace('−', ''))); };
+      put3('cur', T.cur); put3('next', T.next); put3('year', T.year);
+      refs.grp.forEach((r, g) => slots.forEach(([slot]) => { r[slot].textContent = money(sum(md.lines.filter((l) => l.group === g).map((l) => l[slot].value))); }));
+      const d = isDirty();
+      refs.save.disabled = !d;
+      refs.dirty.textContent = d ? 'Not saved yet (아직 저장 안 됨)' : '';
+      if (refs.chart) refs.chart.update(chartOpts());
+    }
+
+    async function save() {
+      const next = planNow();
+      refs.save.disabled = true;
+      try { await api.saveSettings(YP.planRow(api.data.settings, next, L.nowIso(), today)); S.easy.edits = new Map(); api.toast('Forecast saved (예측 저장됨)'); }
+      catch (e) { api.toast('Could not save (저장하지 못했습니다): ' + (e.message || e)); refs.save.disabled = false; }
+    }
+    function resetAll() {
+      md.lines.forEach((l) => slots.forEach(([slot]) => { if (l[slot].plan !== null) S.easy.edits.set(slot + '|' + l.id, null); }));
+      recompute(); paint();
+    }
+
+    // ── 그리기
+    const sumBox = (k, en, ko, sub) => {
+      const inc = h('b'), exp = h('b'), net = h('span');
+      refs.tot[k] = { inc, exp, net };
+      return h('div', { class: 'pe-sum', 'data-k': k },
+        h('div', { class: 'pe-sum-h' }, en, ' ', h('span', { class: 'ko' }, ko), sub ? h('span', { class: 'pe-sum-m' }, sub) : null),
+        h('div', { class: 'pe-sum-r' }, h('span', null, 'Income (수입)'), inc),
+        h('div', { class: 'pe-sum-r' }, h('span', null, 'Spending (지출)'), exp),
+        h('div', { class: 'pe-sum-r net' }, h('span', null, 'Left over (남는 돈)'), net));
+    };
+    const basis = md.trend.length
+      ? (md.basisNote === 'year' ? 'This year ' + shortMon(md.trend[0]) + ' – ' + shortMon(md.trend[md.trend.length - 1]) + ', ' + md.trend.length + ' months (올해 ' + md.trend.length + '개월 평균)'
+        : 'Last ' + md.trend.length + ' months with records (기록 있는 최근 ' + md.trend.length + '개월 평균)')
+      : '';
+    const list = h('div', { class: 'pe-list', id: 'pe-list' });
+    const groups = [];
+    md.lines.forEach((l) => { if (groups.indexOf(l.group) < 0) groups.push(l.group); });
+    groups.forEach((g) => {
+      const gt = {};
+      const head = h('div', { class: 'pe-gh', 'data-group': g },
+        h('span', { class: 'pe-gname' }, g === '수입' ? 'Income (수입)' : (L.GROUP_LABELS[g] || g)),
+        slots.map(([slot, en, ko]) => { gt[slot] = h('b'); return h('span', { class: 'pe-gt' }, h('span', { class: 'pe-glab' }, ko), gt[slot]); }));
+      refs.grp.set(g, gt);
+      list.append(head);
+      md.lines.filter((l) => l.group === g).forEach((l) => list.append(rowEl(l)));
+    });
+    refs.save = h('button', { type: 'button', class: 'btn', id: 'pe-save', onclick: save }, icon('check', 18), 'Save forecast (예측 저장)');
+    refs.dirty = h('span', { class: 'pe-dirty', id: 'pe-dirty', role: 'status' });
+    const colHead = h('div', { class: 'pe-colhead', 'aria-hidden': 'true' }, h('span', null, ''),
+      slots.map(([slot, en, ko, ym]) => h('span', null, en, h('small', null, ko + ' · ' + (slot === 'rest' ? shortMon(md.rest[0]) + '–' + shortMon(md.rest[md.rest.length - 1]) : shortMon(ym))))));
+    refs.chart = md.trend.length ? lineChart(chartOpts()) : null;
+    if (refs.chart) refs.chart.id = 'pe-chart';
+    put(card,
+      heading('Forecast', '예측', h('span', { class: 'pe-basis' }, basis)),
+      md.lines.length ? null : h('div', { class: 'note' }, 'No records yet (아직 기록이 없어요). 거래가 쌓이면 올해 평균으로 예측해 드려요.'),
+      h('div', { class: 'pe-sums' }, sumBox('cur', 'This month', '이번 달', shortMon(md.curYm)), sumBox('next', 'Next month', '다음 달', shortMon(md.nextYm)), sumBox('year', 'Year end', '올해 합계', md.curYm.slice(0, 4))),
+      refs.chart ? h('div', { class: 'pe-chart' }, h('div', { class: 'pl-cap' }, 'This year so far → expected (올해 실제 → 예상)'), refs.chart) : null,
+      md.lines.length ? h('p', { class: 'pe-how' }, 'Each line starts at its average. Use − / + or tap a number to type (줄마다 평균에서 시작해요. − / + 를 누르거나 숫자를 눌러 직접 입력하세요).') : null,
+      md.lines.length ? colHead : null,
+      list,
+      md.lines.length ? h('div', { class: 'pe-foot' }, refs.dirty,
+        h('button', { type: 'button', class: 'btn secondary', id: 'pe-reset-all', onclick: resetAll }, 'All back to average (모두 평균으로)'), refs.save) : null);
+    paint();
+    return card;
+  }
+
   // ───────────────────────────────────── 1) Forecast ─────────────────────────────────────
   function buildFc() {
     const frag = h('div', { class: 'pl-grid pl-fc' });
@@ -375,8 +529,12 @@ export function render(api) {
     const chartBox = h('div', { class: 'pl-chartbox' });
     const side = h('div', { class: 'pl-side' });
     const tableBox = h('div', { class: 'pl-tablebox' });
-    col.append(top, buildBu(), chartBox, tableBox);
+    col.append(top, chartBox, tableBox);
     frag.append(col, side);
+    const more = h('details', { class: 'card pe-more', id: 'pe-more' },
+      h('summary', null, h('span', null, 'More: 12-month cash outlook, what-if and month-by-month entry (더 보기: 12개월 현금 흐름 · 시나리오 · 달별 입력)')),
+      frag, buildBu());
+    const wrap = h('div', { class: 'pe-wrap' }, buildEasy(), more);
     let model = null;
 
     // 이번 달
@@ -569,7 +727,7 @@ export function render(api) {
       paintBanner();
     }
     drawModel();
-    return frag;
+    return wrap;
   }
 
   // ───────────────────────────────────── 2) Next-year budget ─────────────────────────────────────
