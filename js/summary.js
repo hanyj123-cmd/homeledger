@@ -3,6 +3,7 @@
 //   인터랙티브 차트 6개 → 조언 카드(규칙 기반, 항상) → AI 브리핑/질문(버튼을 눌렀을 때만) → 월 메모 → 정기 결제·사람별·상위 업체 → 내보내기.
 // 숫자는 모두 api.analysis() (insights.js) 에서 옵니다. 텍스트 요약은 summary-text.js.
 import * as L from './ledger.js';
+import * as R from './reports.js';
 import * as I from './insights.js';
 import * as M from './meta.js';
 import * as ai from './ai.js';
@@ -103,7 +104,11 @@ export function render(api) {
   const nwD = L.round(ctx.bs.net - ctx.bsPrev.net, 2);
   const asOf = isNow ? today : ctx.bs.asOf;
   const asOfLabel = (() => { const d = new Date(String(asOf).slice(0, 10) + 'T12:00:00'); return isNaN(d) ? asOf : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })();
-  const bm = (id, en, ko, val, chipEl) => h('div', { class: 'sm-m', id }, h('div', { class: 'lab' }, lab(en, ko)), h('div', { class: 'val' }, val), chipEl);
+  const bm = (id, en, ko, val, chipEl, extra) => h('div', { class: 'sm-m', id }, h('div', { class: 'lab' }, lab(en, ko)), h('div', { class: 'val' }, val), chipEl, extra || null);
+  // 저축률: 회사 적립금(주식 · 연금 매칭) 포함 / 통장 기준
+  const empIds = R.employerIncomeIds(api.data && api.data.settings, api.accMap);
+  const svs = R.savingsSplit(R.incomeStatement(api.items, api.accMap, ym), empIds);
+  const rateNote = svs.employer > 0 && svs.cash !== null ? h('div', { class: 'sm-rnote', id: 'sm-b-rate-cash' }, 'incl. match (매칭 포함) ' + money(svs.employer), h('br'), 'cash only (통장 기준) ' + r1(svs.cash) + '%') : null;
   const rateD = hasPrev && cur.rate !== null && prev.rate !== null ? cur.rate - prev.rate : null;
   root.append(h('section', { class: 'banner sm-banner' }, h('div', { class: 'banner-in' },
     h('div', { class: 'banner-row' },
@@ -118,7 +123,7 @@ export function render(api) {
         bm('sm-b-in', 'Income', '수입', money(cur.income), hasPrev ? chg(cur.income - prev.income, true, 'sm-bchip') : null),
         bm('sm-b-out', 'Spending', '지출', money(cur.expense), hasPrev ? chg(cur.expense - prev.expense, false, 'sm-bchip') : null),
         bm('sm-b-net', 'Net', '순수입', money(cur.net), hasPrev ? chg(cur.net - prev.net, true, 'sm-bchip') : null),
-        bm('sm-b-rate', 'Savings rate', '저축률', cur.rate === null ? '—' : r1(cur.rate) + '%', rateD !== null ? chg(rateD, true, 'sm-bchip', 'pp') : null))))));
+        bm('sm-b-rate', 'Savings rate', '저축률', cur.rate === null ? '—' : r1(cur.rate) + '%', rateD !== null ? chg(rateD, true, 'sm-bchip', 'pp') : null, rateNote))))));
 
   // ───────── 알약 버튼 ─────────
   const pill = (id, ic, en, ko, onclick) => h('button', { type: 'button', class: 'pillbtn', id, onclick }, icon(ic, 24), en + ' ', sp('ko', '(' + ko + ')'));

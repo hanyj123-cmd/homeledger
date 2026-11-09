@@ -2,8 +2,29 @@
 import { openPrintReport } from './printreport.js';
 import * as L from './ledger.js';
 import * as B from './budget.js';
+import * as M from './meta.js';
 
 const UNCATEGORIZED_ID = '9999';
+
+// ───────── 회사 적립금 (주식 매칭 · 연금 매칭) ─────────
+// 급여일 연동 입력(설정)의 항목 + 이름이 매칭 · 연금 · EOP · DPSP 인 수입 항목
+const EMPLOYER_RE = /\bmatch|matching|pension|\beop\b|\bdpsp\b|\bespp\b|매칭|연금|회사\s*적립/i;
+export function employerIncomeIds(settings, accMap) {
+  const ids = new Set();
+  const cfg = M.readJson(settings || [], 'meta.paybundle', null);
+  ((cfg && cfg.items) || []).forEach((i) => { if (i && i.on !== false && i.incomeId) ids.add(String(i.incomeId)); });
+  (accMap || new Map()).forEach((a, id) => { if (a && a.type === 'INCOME' && EMPLOYER_RE.test(String(a.name || '') + ' ' + String(a.name_ko || ''))) ids.add(String(id)); });
+  return ids;
+}
+/**
+ * 저축률 두 가지: 회사 적립금 포함(total) · 통장 기준(cash, 회사 적립금을 수입에서 뺌)
+ * stmt = incomeStatement(...) 결과 → { employer, total, cash } (수입이 없으면 rate 는 null)
+ */
+export function savingsSplit(stmt, ids) {
+  const employer = L.round((stmt.incomeLines || []).filter((l) => ids.has(String(l.id))).reduce((s, l) => s + l.amount, 0), 2);
+  const rate = (net, inc) => (inc > 0 ? L.round(net / inc * 100, 1) : null);
+  return { employer, total: rate(stmt.net, stmt.income), cash: rate(stmt.net - employer, stmt.income - employer) };
+}
 
 // ───────── 계산 ─────────
 
@@ -272,11 +293,13 @@ export function render(api) {
   const metric = (lab, val, sub, id) => h('div', { class: 'metric' + (sub ? ' sub' : ''), id: id || null }, h('div', { class: 'metric-lab' }, lab), h('div', { class: 'metric-val' }, val));
   if (cmp) {
     const lab = scope === 'Y' ? 'YTD' : L.monthLabel(month);
+    const svR = savingsSplit(incomeStatementOver(api.items, api.accMap, curMs), employerIncomeIds(api.data.settings, api.accMap));
     addM(
       metric('Net income · ' + lab + ' (순수입)', (cmp.net.cur < 0 ? '−' : '') + fmt(Math.abs(cmp.net.cur)), false, 'bn-net'),
       metric('Income (수입)', fmt(cmp.income.cur), true, 'bn-in'),
       metric('Spending (지출)', fmt(cmp.expense.cur), true, 'bn-out'),
-      cmp.savingsRate !== null ? metric('Savings rate (저축률)', cmp.savingsRate + '%', true, 'bn-rate') : null);
+      cmp.savingsRate !== null ? metric(svR.employer > 0 ? 'Savings rate · incl. match (저축률 · 매칭 포함)' : 'Savings rate (저축률)', cmp.savingsRate + '%', true, 'bn-rate') : null,
+      svR.employer > 0 && svR.cash !== null ? metric('Cash only (통장 기준)', svR.cash + '%', true, 'bn-rate-cash') : null);
   } else if (bs) {
     const dn = L.round(bs.net - bsPrev.net, 2);
     addM(

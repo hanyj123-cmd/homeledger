@@ -145,6 +145,7 @@ export function collect(api, opts) {
   const bs = R.balanceSheet(accounts, items, accMap, ym, ovFor(ym));
   const bsPrev = R.balanceSheet(accounts, items, accMap, prevYm, ovFor(prevYm));
   const isCur = R.incomeStatement(items, accMap, ym);
+  const sv = R.savingsSplit(isCur, R.employerIncomeIds(api.data && api.data.settings, accMap));   // 회사 매칭 포함 / 통장 기준
   const isPrev = R.incomeStatement(items, accMap, prevYm);
   const isYtd = R.incomeStatementOver(items, accMap, ytd);
   const isYtdPrev = R.incomeStatementOver(items, accMap, ytdPrev);
@@ -167,7 +168,7 @@ export function collect(api, opts) {
   const nw = ms12.map((m) => (m === ym ? bs.net : m === prevYm ? bsPrev.net : R.balanceSheet(accounts, items, accMap, m, ovFor(m)).net));
   const txCount = items.filter((it) => L.monthOf(it.txn.date) === ym).length;
   return {
-    ym, prevYm, today, ytd, ytdPrev, accounts, accMap, items, meta, ctx, bs, bsPrev, isCur, isPrev, isYtd, isYtdPrev, budget,
+    ym, prevYm, today, ytd, ytdPrev, accounts, accMap, items, meta, ctx, bs, bsPrev, sv, isCur, isPrev, isYtd, isYtdPrev, budget,
     pos, posPrev, debts, plan: Object.assign({}, plan, { strategy }), payoff, payoffMin, vendors, vendorsYtd, vendorAll: vendorCount,
     owners, ownersPrev, ownersYtd, ms12, series, nw, txCount,
     note: M.readNote(settings, ym), household: householdName(accounts, meta, items)
@@ -328,7 +329,7 @@ function execSummary(D, F) {
     kpi('Net worth (순자산)', F.big(D.bs.net), chg(F, D.bs.net - D.bsPrev.net, true, 'amt') + ' ' + vs, 'hero'),
     kpi('Income (수입)', F.big(c.income), chg(F, c.income - p.income, true, 'amt') + ' ' + vs),
     kpi('Spending (지출)', F.big(c.expense), chg(F, c.expense - p.expense, false, 'amt') + ' ' + vs),
-    kpi('Net savings (순저축)', F.big(c.net), t('Savings rate (저축률)') + ' <b>' + pctSigned(rate) + '</b> ' + (rate !== null && rateP !== null ? chg(F, rate - rateP, true, 'pp') : '')),
+    kpi('Net savings (순저축)', F.big(c.net), t(D.sv.employer > 0 ? 'Savings rate incl. match (저축률 · 회사 매칭 포함)' : 'Savings rate (저축률)') + ' <b>' + pctSigned(rate) + '</b> ' + (rate !== null && rateP !== null ? chg(F, rate - rateP, true, 'pp') : '') + (D.sv.employer > 0 && D.sv.cash !== null ? '<br>' + t('Cash only (통장 기준)') + ' <b>' + pctSigned(D.sv.cash) + '</b> · ' + t('match (회사 매칭)') + ' ' + F.money(D.sv.employer) : '')),
     kpi('Total debt (총부채)', F.big(debt), chg(F, debt - debtP, false, 'amt') + ' ' + vs),
     kpi('Financial health (재무 건강)', H.total === null ? '—' : H.total + '<small>/100 · ' + esc(H.grade) + '</small>', H.total === null ? t('Not enough data (데이터 부족)') : t(GRADE_TXT[H.grade] || H.label))
   ].join('');

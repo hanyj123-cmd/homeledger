@@ -2564,3 +2564,5 @@ input.pe-in.mine { border-color: var(--green); background: var(--tint); }
 /* 종류 · 카테고리 바꾸기 창 */
 .bk-types { margin: 4px 0 8px; display: flex; flex-wrap: wrap; max-width: 100%; overflow: visible; border-radius: 22px; }
 .bk-tnote { margin: 0 0 10px; }
+/* 요약 띠: 저축률 아래 통장 기준 · 회사 매칭 */
+.sm-rnote { margin-top: 6px; font-size: 0.8rem; opacity: 0.92; line-height: 1.4; }
